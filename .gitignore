@@ -1,0 +1,10 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
+
+# Node (only used for the local preview server)
+node_modules/
+
+# Local tooling
+.claude/launch.json
