@@ -419,7 +419,7 @@ views.jobs = async (rest) => {
   el("view").innerHTML = `
     <div class="page-head"><div><h1>Jobs</h1>
       <div class="page-sub">${data.length} total</div></div>
-      <button class="btn btn-primary" onclick="jobForm()">+ New job</button></div>
+      <button class="btn btn-primary" onclick="jobCreateForm()">+ New job</button></div>
     <div class="table-wrap">${data.length ? `<table>
       <thead><tr><th>Title</th><th>Type</th><th>Vehicle</th><th>Customer</th><th>Status</th><th>Price</th></tr></thead>
       <tbody>${data.map(j => `<tr onclick="location.hash='jobs/${j.id}'">
@@ -521,6 +521,115 @@ window.jobForm = async (id) => {
     const { error } = await q;
     if (error) return toast(error.message, "error");
     closeModal(); toast(id ? "Job saved" : "Job created", "success"); route();
+  });
+};
+
+/* New job — enter customer + vehicle + job all in one form */
+window.jnToggleCust = () => { el("jn-cust-fields").style.display = el("jn-cust").value ? "none" : "grid"; };
+window.jnToggleVeh = () => { el("jn-veh-fields").style.display = el("jn-veh").value ? "none" : "grid"; };
+
+window.jobCreateForm = async () => {
+  const [{ data: customers }, { data: vehicles }] = await Promise.all([
+    db.from("customers").select("id,name").order("name"),
+    db.from("vehicles").select("id,registration,make,model,customer_id").order("created_at", { ascending: false }),
+  ]);
+  const custOpts = customers.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  const vehOpts = vehicles.map(v => `<option value="${v.id}" data-cust="${v.customer_id || ""}">${esc(`${v.registration || ""} ${v.make || ""} ${v.model || ""}`)}</option>`).join("");
+  const typeOpts = Object.entries(JOB_TYPES).map(([k, label]) => `<option value="${k}">${label}</option>`).join("");
+  const statusOpts = JOB_STATUS.map(s => `<option value="${s}">${s.replace("_", " ")}</option>`).join("");
+  const hd = (t) => `<h3 style="font-size:13px;color:var(--primary);text-transform:uppercase;letter-spacing:.04em;margin:4px 0 10px">${t}</h3>`;
+
+  openModal("New job", `
+    <form id="jobnew-form">
+      ${hd("Customer")}
+      <div class="field full" style="margin-bottom:12px">
+        <label>Use existing customer</label>
+        <select id="jn-cust" onchange="jnToggleCust()"><option value="">＋ Add new customer</option>${custOpts}</select>
+      </div>
+      <div id="jn-cust-fields" class="form-grid" style="margin-bottom:20px">
+        <div class="field"><label>Name</label><input name="c_name" placeholder="Customer name"></div>
+        <div class="field"><label>Phone</label><input name="c_phone"></div>
+        <div class="field"><label>Email</label><input name="c_email"></div>
+        <div class="field"><label>Company</label><input name="c_company"></div>
+        <div class="field full"><label>Address</label><input name="c_address"></div>
+      </div>
+
+      ${hd("Vehicle")}
+      <div class="field full" style="margin-bottom:12px">
+        <label>Use existing vehicle</label>
+        <select id="jn-veh" onchange="jnToggleVeh()"><option value="">＋ Add new vehicle</option>${vehOpts}</select>
+      </div>
+      <div id="jn-veh-fields" class="form-grid" style="margin-bottom:20px">
+        <div class="field"><label>Registration</label><input name="v_registration"></div>
+        <div class="field"><label>Year</label><input name="v_year"></div>
+        <div class="field"><label>Make</label><input name="v_make"></div>
+        <div class="field"><label>Model</label><input name="v_model"></div>
+        <div class="field"><label>Engine</label><input name="v_engine"></div>
+        <div class="field"><label>ECU type</label><input name="v_ecu_type"></div>
+        <div class="field"><label>Gearbox</label><input name="v_gearbox"></div>
+        <div class="field"><label>VIN</label><input name="v_vin"></div>
+      </div>
+
+      ${hd("Job")}
+      <div class="form-grid">
+        <div class="field full"><label>Title</label><input name="title" placeholder="e.g. Stage 1 remap"></div>
+        <div class="field"><label>Type</label><select name="job_type"><option value="">—</option>${typeOpts}</select></div>
+        <div class="field"><label>Status</label><select name="status">${statusOpts}</select></div>
+        <div class="field"><label>Price (£)</label><input name="price"></div>
+        <div class="field"></div>
+        <div class="field full"><label>Description</label><textarea name="description"></textarea></div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" onclick="closeModalGlobal()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Create job</button>
+      </div>
+    </form>`);
+
+  $("#jobnew-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const val = (n) => f[n].value.trim() || null;
+    let customerId = el("jn-cust").value || null;
+    let vehicleId = el("jn-veh").value || null;
+
+    // create new customer if none chosen and a name was entered
+    if (!customerId && val("c_name")) {
+      const { data, error } = await db.from("customers").insert({
+        name: val("c_name"), phone: val("c_phone"), email: val("c_email"),
+        company: val("c_company"), address: val("c_address"),
+      }).select("id").single();
+      if (error) return toast(error.message, "error");
+      customerId = data.id;
+    }
+
+    if (vehicleId) {
+      // existing vehicle chosen — inherit its customer if none set
+      if (!customerId) {
+        const sel = el("jn-veh").selectedOptions[0];
+        customerId = sel ? (sel.dataset.cust || null) : null;
+      }
+    } else {
+      // create new vehicle if any vehicle detail was entered
+      const vAny = ["v_registration","v_make","v_model","v_engine","v_ecu_type","v_gearbox","v_vin","v_year"].some(n => val(n));
+      if (vAny) {
+        const { data, error } = await db.from("vehicles").insert({
+          customer_id: customerId, registration: val("v_registration"), make: val("v_make"),
+          model: val("v_model"), year: val("v_year") ? Number(val("v_year")) : null,
+          engine: val("v_engine"), ecu_type: val("v_ecu_type"), gearbox: val("v_gearbox"), vin: val("v_vin"),
+        }).select("id").single();
+        if (error) return toast(error.message, "error");
+        vehicleId = data.id;
+      }
+    }
+
+    const { error } = await db.from("jobs").insert({
+      vehicle_id: vehicleId, customer_id: customerId,
+      title: val("title"), job_type: f.job_type.value || null,
+      status: f.status.value || "booked", price: val("price") ? Number(val("price")) : null,
+      description: val("description"),
+    });
+    if (error) return toast(error.message, "error");
+    closeModal(); toast("Job created", "success"); route();
   });
 };
 
