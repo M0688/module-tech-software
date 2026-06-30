@@ -2,6 +2,9 @@
 
 Workshop management app for vehicle remapping & module repair, recovery and cloning.
 
+**🌐 Live app:** https://m0688.github.io/module-tech-software/
+**📦 Repo:** https://github.com/M0688/module-tech-software
+
 **Live features**
 - 🔐 Secure login (only authorised users can see any data)
 - 👥 Customers — contact details & notes
