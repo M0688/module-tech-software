@@ -799,7 +799,6 @@ async function invoiceView(id) {
           <div><strong>${esc(inv.invoice_number) || ""}</strong></div>
           <div>Issued: ${fmtDate(inv.issue_date)}</div>
           ${inv.due_date ? `<div>Due: ${fmtDate(inv.due_date)}</div>` : ""}
-          <div style="margin-top:6px">Status: <strong>${esc(inv.status)}</strong></div>
         </div>
       </div>
 
