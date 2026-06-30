@@ -803,10 +803,138 @@ views.settings = async () => {
   });
 };
 
-views.diagnostics = async () => {
-  el("view").innerHTML = `<div class="coming-soon"><h2>Diagnostic flows</h2>
-    <p>Step-by-step guided procedures for module/PCB work are coming next. You'll be able to build your own checklists here.</p></div>`;
+views.diagnostics = async (rest) => {
+  if (rest[0] === "new") return flowEditor(null);
+  if (rest[0] && rest[1] === "edit") return flowEditor(rest[0]);
+  if (rest[0]) return flowRun(rest[0]);
+  const { data } = await db.from("diagnostic_flows").select("*").order("category").order("title");
+  el("view").innerHTML = `
+    <div class="page-head"><div><h1>Diagnostic flows</h1>
+      <div class="page-sub">Step-by-step guides you can follow & tick off during a job</div></div>
+      <button class="btn btn-primary" onclick="location.hash='diagnostics/new'">+ New flow</button></div>
+    ${data.length ? `<div class="flow-grid">${data.map(f => `
+      <div class="flow-card" onclick="location.hash='diagnostics/${f.id}'">
+        ${f.category ? `<div class="cat">${esc(f.category)}</div>` : ""}
+        <h3>${esc(f.title)}</h3>
+        ${f.summary ? `<div class="muted" style="font-size:13px">${esc(f.summary)}</div>` : ""}
+        <div class="count">${(f.steps || []).length} step${(f.steps || []).length === 1 ? "" : "s"}</div>
+      </div>`).join("")}</div>`
+    : `<div class="empty">No diagnostic flows yet. Click "New flow" to build your first guided procedure.</div>`}`;
 };
+
+window.flowToggle = (cb) => {
+  cb.closest(".step-item").classList.toggle("done", cb.checked);
+  const total = document.querySelectorAll(".step-item").length;
+  const done = document.querySelectorAll(".step-item.done").length;
+  el("flow-progress-fill").style.width = (total ? done / total * 100 : 0) + "%";
+  el("flow-progress-text").textContent = `${done} of ${total} done`;
+};
+window.flowReset = () => {
+  document.querySelectorAll(".step-item input").forEach(c => { c.checked = false; c.closest(".step-item").classList.remove("done"); });
+  const total = document.querySelectorAll(".step-item").length;
+  el("flow-progress-fill").style.width = "0%";
+  el("flow-progress-text").textContent = `0 of ${total} done`;
+};
+
+async function flowRun(id) {
+  const { data: f } = await db.from("diagnostic_flows").select("*").eq("id", id).single();
+  if (!f) { el("view").innerHTML = `<div class="empty">Flow not found.</div>`; return; }
+  const steps = f.steps || [];
+  el("view").innerHTML = `
+    <div class="breadcrumb"><a href="#diagnostics">Diagnostic flows</a> / ${esc(f.title)}</div>
+    <div class="page-head"><div>
+      ${f.category ? `<div class="cat" style="color:var(--primary);font-size:12px;font-weight:600;text-transform:uppercase">${esc(f.category)}</div>` : ""}
+      <h1>${esc(f.title)}</h1>
+      ${f.summary ? `<div class="page-sub">${esc(f.summary)}</div>` : ""}</div>
+      <div class="row-actions">
+        <button class="btn" onclick="flowReset()">Reset</button>
+        <button class="btn" onclick="location.hash='diagnostics/${id}/edit'">Edit</button>
+        <button class="btn btn-danger" onclick="deleteRow('diagnostic_flows','${id}','diagnostics')">Delete</button>
+      </div></div>
+    <div class="progress-bar"><div class="progress-fill" id="flow-progress-fill"></div></div>
+    <div class="page-sub" id="flow-progress-text" style="margin-bottom:18px">0 of ${steps.length} done</div>
+    ${steps.length ? steps.map((s, i) => `
+      <div class="step-item">
+        <input type="checkbox" onchange="flowToggle(this)">
+        <div class="step-num">${i + 1}</div>
+        <div class="step-body">
+          <div class="step-title">${esc(s.title)}</div>
+          ${s.detail ? `<div class="step-detail">${esc(s.detail)}</div>` : ""}
+        </div>
+      </div>`).join("")
+    : `<div class="empty">This flow has no steps yet. Click Edit to add some.</div>`}`;
+}
+
+function stepRowHtml(s = {}) {
+  return `<div class="step-edit-row">
+    <div class="step-move">
+      <button type="button" onclick="flowMoveStep(this,-1)" title="Move up">&#9650;</button>
+      <button type="button" onclick="flowMoveStep(this,1)" title="Move down">&#9660;</button>
+    </div>
+    <div class="step-edit-fields">
+      <input class="se-title" placeholder="Step title (e.g. Visual inspection)" value="${esc(s.title)}">
+      <textarea class="se-detail" placeholder="Details — what to check, look for, or do">${esc(s.detail)}</textarea>
+    </div>
+    <button type="button" class="li-del" onclick="flowDelStep(this)">&times;</button>
+  </div>`;
+}
+window.flowAddStep = () => { el("steps-body").insertAdjacentHTML("beforeend", stepRowHtml()); };
+window.flowDelStep = (b) => b.closest(".step-edit-row").remove();
+window.flowMoveStep = (btn, dir) => {
+  const row = btn.closest(".step-edit-row");
+  if (dir < 0 && row.previousElementSibling) row.parentNode.insertBefore(row, row.previousElementSibling);
+  if (dir > 0 && row.nextElementSibling) row.parentNode.insertBefore(row.nextElementSibling, row);
+};
+
+async function flowEditor(id) {
+  let f = { steps: [] };
+  if (id) f = (await db.from("diagnostic_flows").select("*").eq("id", id).single()).data;
+  const steps = (f.steps && f.steps.length) ? f.steps : [{ title: "", detail: "" }];
+  el("view").innerHTML = `
+    <div class="breadcrumb"><a href="#diagnostics">Diagnostic flows</a> / ${id ? "Edit" : "New"}</div>
+    <div class="page-head"><h1>${id ? "Edit flow" : "New flow"}</h1></div>
+    <form id="flow-form">
+      <div class="panel"><div class="form-grid">
+        <div class="field"><label>Title *</label><input name="title" required value="${esc(f.title)}" placeholder="e.g. Module PCB repair"></div>
+        <div class="field"><label>Category</label><input name="category" value="${esc(f.category)}" placeholder="e.g. PCB repair, immobiliser, gearbox"></div>
+        <div class="field full"><label>Summary</label><input name="summary" value="${esc(f.summary)}" placeholder="One-line description of when to use this"></div>
+      </div></div>
+      <div class="panel">
+        <h3>Steps</h3>
+        <div id="steps-body">${steps.map(stepRowHtml).join("")}</div>
+        <button type="button" class="btn btn-sm" onclick="flowAddStep()">+ Add step</button>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" onclick="location.hash='diagnostics'">Cancel</button>
+        <button type="submit" class="btn btn-primary">${id ? "Save flow" : "Create flow"}</button>
+      </div>
+    </form>`;
+  $("#flow-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f2 = e.target;
+    const stepsOut = [...document.querySelectorAll("#steps-body .step-edit-row")].map(r => ({
+      title: r.querySelector(".se-title").value.trim(),
+      detail: r.querySelector(".se-detail").value.trim(),
+    })).filter(s => s.title || s.detail);
+    const payload = {
+      title: f2.title.value.trim(),
+      category: f2.category.value.trim() || null,
+      summary: f2.summary.value.trim() || null,
+      steps: stepsOut,
+    };
+    let fid = id;
+    if (id) {
+      const { error } = await db.from("diagnostic_flows").update(payload).eq("id", id);
+      if (error) return toast(error.message, "error");
+    } else {
+      const { data, error } = await db.from("diagnostic_flows").insert(payload).select("id").single();
+      if (error) return toast(error.message, "error");
+      fid = data.id;
+    }
+    toast("Flow saved", "success");
+    location.hash = "diagnostics/" + fid;
+  });
+}
 
 /* ---------- generic delete ---------- */
 window.deleteRow = async (table, id, backTo) => {
