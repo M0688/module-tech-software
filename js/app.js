@@ -538,10 +538,271 @@ window.faultForm = async (id, vehicleId) => {
 /* ===========================================================
    PLACEHOLDERS (next iterations)
    =========================================================== */
-views.invoices = async () => {
-  el("view").innerHTML = `<div class="coming-soon"><h2>Invoices</h2>
-    <p>Invoice builder is the next feature on the list — it'll pull from jobs and customers automatically.</p></div>`;
+const INV_STATUS = ["draft", "sent", "paid", "overdue"];
+
+function nextInvoiceNumber(existing) {
+  let max = 0;
+  existing.forEach(n => { const m = /(\d+)\s*$/.exec(n || ""); if (m) max = Math.max(max, parseInt(m[1], 10)); });
+  return "INV-" + String(max + 1).padStart(4, "0");
+}
+
+views.invoices = async (rest) => {
+  if (rest[0] === "new") return invoiceEditor(null);
+  if (rest[0] && rest[1] === "edit") return invoiceEditor(rest[0]);
+  if (rest[0]) return invoiceView(rest[0]);
+  const { data } = await db.from("invoices").select("*, customers(name)").order("created_at", { ascending: false });
+  el("view").innerHTML = `
+    <div class="page-head"><div><h1>Invoices</h1><div class="page-sub">${data.length} total</div></div>
+      <button class="btn btn-primary" onclick="location.hash='invoices/new'">+ New invoice</button></div>
+    <div class="table-wrap">${data.length ? `<table>
+      <thead><tr><th>Number</th><th>Customer</th><th>Issued</th><th>Total</th><th>Status</th></tr></thead>
+      <tbody>${data.map(i => `<tr onclick="location.hash='invoices/${i.id}'">
+        <td>${esc(i.invoice_number) || "—"}</td>
+        <td>${i.customers ? esc(i.customers.name) : "—"}</td>
+        <td class="muted">${fmtDate(i.issue_date)}</td>
+        <td>${fmtMoney(i.total)}</td>
+        <td><span class="badge badge-${i.status}">${esc(i.status)}</span></td></tr>`).join("")}</tbody>
+    </table>` : `<div class="empty">No invoices yet. Click "New invoice" to create one.</div>`}</div>`;
 };
+
+function invRowHtml(it = {}) {
+  return `<tr>
+    <td><input class="li-desc" value="${esc(it.description)}" placeholder="Description"></td>
+    <td class="col-qty"><input class="li-qty" type="number" step="any" value="${it.quantity ?? 1}" oninput="invRecalc()"></td>
+    <td class="col-price"><input class="li-price" type="number" step="any" value="${it.unit_price ?? 0}" oninput="invRecalc()"></td>
+    <td class="col-total li-total num">£0.00</td>
+    <td class="col-x"><button type="button" class="li-del" onclick="invDelRow(this)">&times;</button></td></tr>`;
+}
+window.invRecalc = () => {
+  let sub = 0;
+  document.querySelectorAll("#li-body tr").forEach(tr => {
+    const q = parseFloat(tr.querySelector(".li-qty").value) || 0;
+    const p = parseFloat(tr.querySelector(".li-price").value) || 0;
+    const lt = q * p; sub += lt;
+    tr.querySelector(".li-total").textContent = "£" + lt.toFixed(2);
+  });
+  const rate = parseFloat(el("inv-tax").value) || 0;
+  const tax = sub * rate / 100;
+  el("inv-subtotal").textContent = "£" + sub.toFixed(2);
+  el("inv-taxamt").textContent = "£" + tax.toFixed(2);
+  el("inv-grand").textContent = "£" + (sub + tax).toFixed(2);
+};
+window.invAddRow = () => { el("li-body").insertAdjacentHTML("beforeend", invRowHtml()); invRecalc(); };
+window.invDelRow = (btn) => { btn.closest("tr").remove(); invRecalc(); };
+window.invAddJobLine = (sel) => {
+  const o = sel.selectedOptions[0];
+  if (!o.value) return;
+  el("li-body").insertAdjacentHTML("beforeend", invRowHtml({ description: o.dataset.title, quantity: 1, unit_price: o.dataset.price || 0 }));
+  // if a customer isn't chosen yet, adopt the job's customer
+  const cust = el("inv-customer");
+  if (cust && !cust.value && o.dataset.cust) cust.value = o.dataset.cust;
+  sel.value = "";
+  invRecalc();
+};
+
+async function invoiceEditor(id) {
+  const [{ data: settings }, { data: customers }, { data: jobs }] = await Promise.all([
+    db.from("business_settings").select("*").eq("id", true).single(),
+    db.from("customers").select("id,name").order("name"),
+    db.from("jobs").select("id,title,price,customer_id").order("created_at", { ascending: false }),
+  ]);
+  let inv = { status: "draft", issue_date: new Date().toISOString().slice(0, 10), tax_rate: settings?.default_tax_rate ?? 0 };
+  let items = [];
+  if (id) {
+    inv = (await db.from("invoices").select("*").eq("id", id).single()).data;
+    items = (await db.from("invoice_items").select("*").eq("invoice_id", id).order("id")).data || [];
+  } else {
+    const all = (await db.from("invoices").select("invoice_number")).data || [];
+    inv.invoice_number = nextInvoiceNumber(all.map(x => x.invoice_number));
+  }
+  if (!items.length) items = [{ description: "", quantity: 1, unit_price: 0 }];
+
+  const custOpts = customers.map(c => `<option value="${c.id}" ${c.id === inv.customer_id ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+  const jobOpts = jobs.map(j => `<option value="${j.id}" data-title="${esc(j.title || "Job")}" data-price="${j.price ?? 0}" data-cust="${j.customer_id || ""}">${esc(j.title || "Job")} ${j.price != null ? "— " + fmtMoney(j.price) : ""}</option>`).join("");
+  const statusOpts = INV_STATUS.map(s => `<option value="${s}" ${s === inv.status ? "selected" : ""}>${s}</option>`).join("");
+
+  el("view").innerHTML = `
+    <div class="breadcrumb"><a href="#invoices">Invoices</a> / ${id ? esc(inv.invoice_number) : "New"}</div>
+    <div class="page-head"><h1>${id ? "Edit invoice" : "New invoice"}</h1></div>
+    <form id="inv-form">
+      <div class="panel">
+        <div class="form-grid">
+          <div class="field"><label>Customer *</label><select id="inv-customer" name="customer_id" required><option value="">—</option>${custOpts}</select></div>
+          <div class="field"><label>Invoice number</label><input name="invoice_number" value="${esc(inv.invoice_number)}"></div>
+          <div class="field"><label>Issue date</label><input type="date" name="issue_date" value="${inv.issue_date || ""}"></div>
+          <div class="field"><label>Due date</label><input type="date" name="due_date" value="${inv.due_date || ""}"></div>
+          <div class="field"><label>Status</label><select name="status">${statusOpts}</select></div>
+          <div class="field"><label>Add line from job</label><select onchange="invAddJobLine(this)"><option value="">Pick a job…</option>${jobOpts}</select></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Line items</h3>
+        <table class="line-items">
+          <thead><tr><th>Description</th><th class="col-qty">Qty</th><th class="col-price">Unit £</th><th class="col-total">Total</th><th class="col-x"></th></tr></thead>
+          <tbody id="li-body">${items.map(invRowHtml).join("")}</tbody>
+        </table>
+        <button type="button" class="btn btn-sm" style="margin-top:10px" onclick="invAddRow()">+ Add line</button>
+
+        <div class="totals">
+          <div class="row"><span class="muted">Subtotal</span><span id="inv-subtotal">£0.00</span></div>
+          <div class="row"><span class="muted">VAT (<input id="inv-tax" name="tax_rate" type="number" step="any" value="${inv.tax_rate ?? 0}" style="width:60px;display:inline-block;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:6px" oninput="invRecalc()">%)</span><span id="inv-taxamt">£0.00</span></div>
+          <div class="row grand"><span>Total</span><span id="inv-grand">£0.00</span></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="field"><label>Notes (shown on invoice)</label><textarea name="notes">${esc(inv.notes)}</textarea></div>
+      </div>
+
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" onclick="location.hash='invoices'">Cancel</button>
+        <button type="submit" class="btn btn-primary">${id ? "Save invoice" : "Create invoice"}</button>
+      </div>
+    </form>`;
+  invRecalc();
+
+  $("#inv-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    if (!f.customer_id.value) return toast("Please choose a customer", "error");
+    // gather items
+    const rows = [...document.querySelectorAll("#li-body tr")].map(tr => ({
+      description: tr.querySelector(".li-desc").value.trim(),
+      quantity: parseFloat(tr.querySelector(".li-qty").value) || 0,
+      unit_price: parseFloat(tr.querySelector(".li-price").value) || 0,
+    })).filter(r => r.description || r.unit_price || r.quantity);
+    rows.forEach(r => r.line_total = r.quantity * r.unit_price);
+    const subtotal = rows.reduce((s, r) => s + r.line_total, 0);
+    const tax_rate = parseFloat(f.tax_rate.value) || 0;
+    const tax_amount = subtotal * tax_rate / 100;
+    const payload = {
+      customer_id: f.customer_id.value || null,
+      invoice_number: f.invoice_number.value.trim() || null,
+      status: f.status.value,
+      issue_date: f.issue_date.value || null,
+      due_date: f.due_date.value || null,
+      tax_rate, subtotal, tax_amount, total: subtotal + tax_amount,
+      notes: f.notes.value.trim() || null,
+    };
+    let invId = id;
+    if (id) {
+      const { error } = await db.from("invoices").update(payload).eq("id", id);
+      if (error) return toast(error.message, "error");
+      await db.from("invoice_items").delete().eq("invoice_id", id);
+    } else {
+      const { data, error } = await db.from("invoices").insert(payload).select("id").single();
+      if (error) return toast(error.message, "error");
+      invId = data.id;
+    }
+    if (rows.length) {
+      const { error } = await db.from("invoice_items").insert(rows.map(r => ({ ...r, invoice_id: invId })));
+      if (error) return toast(error.message, "error");
+    }
+    toast("Invoice saved", "success");
+    location.hash = "invoices/" + invId;
+  });
+}
+
+async function invoiceView(id) {
+  const [{ data: inv }, { data: settings }] = await Promise.all([
+    db.from("invoices").select("*, customers(name,company,address,phone,email)").eq("id", id).single(),
+    db.from("business_settings").select("*").eq("id", true).single(),
+  ]);
+  if (!inv) { el("view").innerHTML = `<div class="empty">Invoice not found.</div>`; return; }
+  const { data: items } = await db.from("invoice_items").select("*").eq("invoice_id", id).order("id");
+  const c = inv.customers || {};
+  const s = settings || {};
+  const bizLine = (x) => x ? `<div>${esc(x)}</div>` : "";
+
+  el("view").innerHTML = `
+    <div class="page-head no-print"><div class="breadcrumb"><a href="#invoices">Invoices</a> / ${esc(inv.invoice_number)}</div>
+      <div class="row-actions">
+        <select onchange="invSetStatus('${id}', this.value)" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:8px">
+          ${INV_STATUS.map(st => `<option value="${st}" ${st === inv.status ? "selected" : ""}>${st}</option>`).join("")}
+        </select>
+        <button class="btn" onclick="location.hash='invoices/${id}/edit'">Edit</button>
+        <button class="btn btn-primary" onclick="window.print()">Print / Save PDF</button>
+        <button class="btn btn-danger" onclick="deleteRow('invoices','${id}','invoices')">Delete</button>
+      </div></div>
+
+    <div class="invoice-doc">
+      <div class="inv-head">
+        <div class="inv-biz">
+          <h2>${esc(s.business_name) || "Your business"}</h2>
+          ${bizLine(s.address)}${bizLine(s.phone)}${bizLine(s.email)}
+          ${s.vat_number ? `<div>VAT: ${esc(s.vat_number)}</div>` : ""}
+        </div>
+        <div class="inv-meta">
+          <div class="inv-title">Invoice</div>
+          <div><strong>${esc(inv.invoice_number) || ""}</strong></div>
+          <div>Issued: ${fmtDate(inv.issue_date)}</div>
+          ${inv.due_date ? `<div>Due: ${fmtDate(inv.due_date)}</div>` : ""}
+          <div style="margin-top:6px">Status: <strong>${esc(inv.status)}</strong></div>
+        </div>
+      </div>
+
+      <div class="inv-parties">
+        <div><div class="label">Bill to</div>
+          <div><strong>${esc(c.name) || "—"}</strong></div>
+          ${bizLine(c.company)}${bizLine(c.address)}${bizLine(c.phone)}${bizLine(c.email)}
+        </div>
+      </div>
+
+      <table class="inv-items">
+        <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Unit £</th><th class="num">Amount</th></tr></thead>
+        <tbody>${(items || []).map(it => `<tr>
+          <td>${esc(it.description)}</td>
+          <td class="num">${Number(it.quantity)}</td>
+          <td class="num">${Number(it.unit_price).toFixed(2)}</td>
+          <td class="num">${Number(it.line_total).toFixed(2)}</td></tr>`).join("")}</tbody>
+      </table>
+
+      <div class="inv-totals">
+        <div class="row"><span>Subtotal</span><span>${fmtMoney(inv.subtotal)}</span></div>
+        <div class="row"><span>VAT (${Number(inv.tax_rate)}%)</span><span>${fmtMoney(inv.tax_amount)}</span></div>
+        <div class="row grand"><span>Total</span><span>${fmtMoney(inv.total)}</span></div>
+      </div>
+
+      ${inv.notes ? `<div class="inv-foot"><strong>Notes:</strong> ${esc(inv.notes)}</div>` : ""}
+      ${s.invoice_terms ? `<div class="inv-foot">${esc(s.invoice_terms)}</div>` : ""}
+      ${s.bank_details ? `<div class="inv-foot"><strong>Payment:</strong> ${esc(s.bank_details)}</div>` : ""}
+    </div>`;
+}
+
+window.invSetStatus = async (id, status) => {
+  const { error } = await db.from("invoices").update({ status }).eq("id", id);
+  if (error) return toast(error.message, "error");
+  toast("Status updated to " + status, "success");
+};
+
+/* ===================== SETTINGS ===================== */
+views.settings = async () => {
+  const { data: s } = await db.from("business_settings").select("*").eq("id", true).single();
+  el("view").innerHTML = `
+    <div class="page-head"><div><h1>Settings</h1>
+      <div class="page-sub">Your business details — these appear on invoices.</div></div></div>
+    <form id="settings-form"><div class="panel"><div class="form-grid">
+      <div class="field full"><label>Business name</label><input name="business_name" value="${esc(s.business_name)}"></div>
+      <div class="field full"><label>Address</label><textarea name="address">${esc(s.address)}</textarea></div>
+      <div class="field"><label>Phone</label><input name="phone" value="${esc(s.phone)}"></div>
+      <div class="field"><label>Email</label><input name="email" value="${esc(s.email)}"></div>
+      <div class="field"><label>VAT number</label><input name="vat_number" value="${esc(s.vat_number)}"></div>
+      <div class="field"><label>Default VAT rate (%)</label><input name="default_tax_rate" data-type="number" value="${s.default_tax_rate ?? 0}"></div>
+      <div class="field full"><label>Bank / payment details</label><textarea name="bank_details">${esc(s.bank_details)}</textarea></div>
+      <div class="field full"><label>Invoice terms / footer</label><textarea name="invoice_terms">${esc(s.invoice_terms)}</textarea></div>
+    </div>
+    <div class="form-actions"><button type="submit" class="btn btn-primary">Save settings</button></div>
+    </div></form>`;
+  $("#settings-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const payload = readForm(e.target);
+    const { error } = await db.from("business_settings").update(payload).eq("id", true);
+    if (error) return toast(error.message, "error");
+    toast("Settings saved", "success");
+  });
+};
+
 views.diagnostics = async () => {
   el("view").innerHTML = `<div class="coming-soon"><h2>Diagnostic flows</h2>
     <p>Step-by-step guided procedures for module/PCB work are coming next. You'll be able to build your own checklists here.</p></div>`;

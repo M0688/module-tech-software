@@ -8,7 +8,9 @@
       "mcp__Claude_Preview__preview_start",
       "Bash(git init *)",
       "Bash(git add *)",
-      "Bash(git -c 'user.name=Module Tech' -c user.email=mitchellmorris1988@gmail.com commit -q -m 'Initial build: login, customers, vehicles, files, jobs, fault log *)"
+      "Bash(git -c 'user.name=Module Tech' -c user.email=mitchellmorris1988@gmail.com commit -q -m 'Initial build: login, customers, vehicles, files, jobs, fault log *)",
+      "mcp__3e39bf3e-60c9-4d6b-9128-1d8bf524eac3__apply_migration",
+      "Bash(git -c 'user.name=Module Tech' -c user.email=mitchellmorris1988@gmail.com commit -q -m 'Add invoice builder, printable invoices, and business settings *)"
     ]
   }
 }
