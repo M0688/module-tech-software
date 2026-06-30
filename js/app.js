@@ -789,6 +789,7 @@ async function invoiceView(id) {
     <div class="invoice-doc">
       <div class="inv-head">
         <div class="inv-biz">
+          <img class="inv-logo" src="assets/logo.png" alt="Module Tech">
           <h2>${esc(s.business_name) || "Your business"}</h2>
           ${bizLine(s.address)}${bizLine(s.phone)}${bizLine(s.email)}
           ${s.vat_number ? `<div>VAT: ${esc(s.vat_number)}</div>` : ""}

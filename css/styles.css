@@ -1,15 +1,16 @@
 :root {
-  --bg: #0f1115;
-  --surface: #181b22;
-  --surface-2: #1f232c;
-  --border: #2a2f3a;
-  --text: #e6e9ef;
-  --text-dim: #9aa3b2;
-  --primary: #ff6b1a;
-  --primary-dim: #c9531190;
+  --bg: #0a1521;
+  --surface: #102136;
+  --surface-2: #19324d;
+  --border: #284663;
+  --text: #eaf2fb;
+  --text-dim: #93a6c0;
+  --primary: #2b8ae6;
+  --primary-dim: #2b8ae655;
+  --accent: #38c6f4;
   --green: #2ecc71;
-  --red: #ff5252;
-  --blue: #3aa0ff;
+  --red: #ff5b5b;
+  --blue: #38c6f4;
   --radius: 10px;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
@@ -34,7 +35,7 @@ a { color: inherit; text-decoration: none; }
   font-size: 14px; font-weight: 500; transition: .15s; white-space: nowrap;
 }
 .btn:hover { border-color: #3a4150; }
-.btn-primary { background: var(--primary); border-color: var(--primary); color: #1a1205; font-weight: 600; }
+.btn-primary { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
 .btn-primary:hover { filter: brightness(1.08); }
 .btn-ghost { background: transparent; }
 .btn-danger { color: var(--red); border-color: #4a2a2a; background: transparent; }
@@ -45,7 +46,7 @@ a { color: inherit; text-decoration: none; }
 /* ---------- Login ---------- */
 .login-screen {
   display: flex; align-items: center; justify-content: center;
-  height: 100vh; background: radial-gradient(circle at 30% 20%, #1c2030, var(--bg));
+  height: 100vh; background: radial-gradient(circle at 30% 20%, #15355a, var(--bg));
 }
 .login-card {
   width: 360px; background: var(--surface); border: 1px solid var(--border);
@@ -65,8 +66,13 @@ a { color: inherit; text-decoration: none; }
 .brand-mark {
   display: inline-flex; align-items: center; justify-content: center;
   width: 44px; height: 44px; border-radius: 12px; flex-shrink: 0;
-  background: var(--primary); color: #1a1205; font-weight: 800; font-size: 16px;
+  background: var(--primary); color: #fff; font-weight: 800; font-size: 16px;
 }
+
+/* Logo images */
+.login-logo { width: 300px; max-width: 100%; display: block; margin: 0 auto 6px; border-radius: 12px; }
+.sidebar-logo { width: 100%; display: block; border-radius: 10px; margin-bottom: 16px; }
+.invoice-doc .inv-logo { max-width: 230px; height: auto; border-radius: 8px; display: block; margin-bottom: 12px; }
 
 /* ---------- App layout ---------- */
 .app { display: grid; grid-template-columns: 230px 1fr; height: 100vh; }
@@ -200,7 +206,7 @@ tbody tr:last-child td { border-bottom: none; }
 .invoice-doc table.inv-items .num { text-align: right; }
 .invoice-doc .inv-totals { width: 280px; margin-left: auto; font-size: 14px; }
 .invoice-doc .inv-totals .row { display: flex; justify-content: space-between; padding: 6px 12px; }
-.invoice-doc .inv-totals .grand { background: #111; color: #fff; border-radius: 6px; font-weight: 700; font-size: 16px; }
+.invoice-doc .inv-totals .grand { background: #0e2236; color: #fff; border-radius: 6px; font-weight: 700; font-size: 16px; }
 .invoice-doc .inv-foot { margin-top: 36px; font-size: 12px; color: #555; border-top: 1px solid #eee; padding-top: 16px; }
 .inv-status-pill { display:inline-block; padding:3px 12px; border-radius:20px; font-size:12px; font-weight:700; }
 
