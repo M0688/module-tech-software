@@ -347,7 +347,9 @@ async function vehicleDetail(id) {
 }
 
 /* ---------- File upload / download ---------- */
-window.fileUploadForm = (vehicleId) => {
+window.fileUploadForm = async (vehicleId, jobId) => {
+  const { data: jobs } = await db.from("jobs").select("id,title,job_type").eq("vehicle_id", vehicleId).order("created_at", { ascending: false });
+  const jobOpts = (jobs || []).map(j => `<option value="${j.id}" ${j.id === jobId ? "selected" : ""}>${esc(j.title || JOB_TYPES[j.job_type] || "Job")}</option>`).join("");
   openModal("Upload file", `
     <form id="file-form">
       <div class="form-grid">
@@ -361,6 +363,7 @@ window.fileUploadForm = (vehicleId) => {
           <option value="other">Other</option>
         </select></div>
         <div class="field"><label>Label</label><input name="label" placeholder="e.g. Stage 1 map"></div>
+        <div class="field full"><label>Link to job (optional)</label><select name="job_id"><option value="">— none —</option>${jobOpts}</select></div>
         <div class="field full"><label>Notes</label><textarea name="notes"></textarea></div>
       </div>
       <div class="form-actions">
@@ -378,7 +381,7 @@ window.fileUploadForm = (vehicleId) => {
     const { error: upErr } = await db.storage.from(cfg.FILE_BUCKET).upload(path, file);
     if (upErr) { el("upbtn").textContent = "Upload"; return toast(upErr.message, "error"); }
     const { error } = await db.from("vehicle_files").insert({
-      vehicle_id: vehicleId, kind: form.kind.value,
+      vehicle_id: vehicleId, job_id: form.job_id.value || null, kind: form.kind.value,
       label: form.label.value.trim() || null, notes: form.notes.value.trim() || null,
       storage_path: path, original_name: file.name, size_bytes: file.size,
     });
@@ -408,7 +411,8 @@ window.deleteFile = async (id, path, vehicleId) => {
 const JOB_TYPES = { remap: "Remap", module_repair: "Module repair", cloning: "Cloning", recovery: "Recovery", diagnostic: "Diagnostic" };
 const JOB_STATUS = ["booked", "in_progress", "awaiting_parts", "completed", "invoiced"];
 
-views.jobs = async () => {
+views.jobs = async (rest) => {
+  if (rest[0]) return jobDetail(rest[0]);
   const { data } = await db.from("jobs")
     .select("*, vehicles(registration, make, model), customers(name)")
     .order("created_at", { ascending: false });
@@ -418,7 +422,7 @@ views.jobs = async () => {
       <button class="btn btn-primary" onclick="jobForm()">+ New job</button></div>
     <div class="table-wrap">${data.length ? `<table>
       <thead><tr><th>Title</th><th>Type</th><th>Vehicle</th><th>Customer</th><th>Status</th><th>Price</th></tr></thead>
-      <tbody>${data.map(j => `<tr onclick="jobForm('${j.id}')">
+      <tbody>${data.map(j => `<tr onclick="location.hash='jobs/${j.id}'">
         <td>${esc(j.title) || "—"}</td>
         <td>${esc(JOB_TYPES[j.job_type] || j.job_type) || "—"}</td>
         <td>${j.vehicles ? esc(`${j.vehicles.registration || ""} ${j.vehicles.make || ""}`) : "—"}</td>
@@ -427,6 +431,56 @@ views.jobs = async () => {
         <td>${fmtMoney(j.price)}</td></tr>`).join("")}</tbody>
     </table>` : `<div class="empty">No jobs yet.</div>`}</div>`;
 };
+
+async function jobDetail(id) {
+  const { data: j } = await db.from("jobs").select("*, vehicles(id,registration,make,model), customers(id,name)").eq("id", id).single();
+  if (!j) { el("view").innerHTML = `<div class="empty">Job not found.</div>`; return; }
+  const v = j.vehicles;
+  const { data: files } = await db.from("vehicle_files").select("*").eq("job_id", id).order("created_at", { ascending: false });
+  const { data: faults } = await db.from("faults").select("*").eq("job_id", id).order("created_at", { ascending: false });
+  el("view").innerHTML = `
+    <div class="breadcrumb"><a href="#jobs">Jobs</a> / ${esc(j.title || "Job")}</div>
+    <div class="page-head"><div>
+      <h1>${esc(j.title || "Job")} <span class="badge badge-${j.status}">${esc(j.status.replace("_", " "))}</span></h1>
+      <div class="page-sub">${esc(JOB_TYPES[j.job_type] || j.job_type || "")}</div></div>
+      <div class="row-actions">
+        <button class="btn" onclick="jobForm('${j.id}')">Edit</button>
+        <button class="btn btn-danger" onclick="deleteRow('jobs','${j.id}','jobs')">Delete</button>
+      </div></div>
+
+    <div class="panel"><h3>Details</h3>
+      <div class="form-grid">
+        <div><span class="muted">Vehicle:</span> ${v ? `<a href="#vehicles/${v.id}" style="color:var(--blue)">${esc(`${v.registration || ""} ${v.make || ""} ${v.model || ""}`)}</a>` : "—"}</div>
+        <div><span class="muted">Customer:</span> ${j.customers ? `<a href="#customers/${j.customers.id}" style="color:var(--blue)">${esc(j.customers.name)}</a>` : "—"}</div>
+        <div><span class="muted">Price:</span> ${fmtMoney(j.price)}</div>
+        <div><span class="muted">Created:</span> ${fmtDate(j.created_at)}</div>
+      </div>
+      ${j.description ? `<p class="muted" style="margin-top:10px">${esc(j.description)}</p>` : ""}
+    </div>
+
+    <div class="page-head"><h1 style="font-size:18px">Files</h1>
+      ${v ? `<button class="btn btn-primary btn-sm" onclick="fileUploadForm('${v.id}','${j.id}')">+ Upload file</button>` : ""}</div>
+    <div class="table-wrap" style="margin-bottom:24px">
+      ${!v ? `<div class="empty">Link a vehicle to this job (Edit) to attach files.</div>`
+        : files.length ? files.map(f => `<div class="file-row">
+        <div class="file-meta"><span class="name">${esc(f.label || f.original_name)}</span>
+          <span class="sub">${esc((f.kind || "").replace("_", " "))} · ${esc(f.original_name)} · ${fmtBytes(f.size_bytes)} · ${fmtDate(f.created_at)}</span></div>
+        <div class="file-actions">
+          <button class="btn btn-sm" onclick="downloadFile('${esc(f.storage_path)}','${esc(f.original_name)}')">Download</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteFile('${f.id}','${esc(f.storage_path)}','${v.id}')">Delete</button>
+        </div></div>`).join("") : `<div class="empty">No files linked to this job yet.</div>`}
+    </div>
+
+    <div class="page-head"><h1 style="font-size:18px">Faults</h1>
+      <button class="btn btn-primary btn-sm" onclick="faultForm(null,${v ? `'${v.id}'` : "null"},'${j.id}')">+ Log fault</button></div>
+    <div class="table-wrap">${faults.length ? `<table>
+      <thead><tr><th>Module</th><th>Code</th><th>Description</th><th>Resolution</th><th>Date</th></tr></thead>
+      <tbody>${faults.map(f => `<tr onclick="faultForm('${f.id}',${v ? `'${v.id}'` : "null"},'${j.id}')">
+        <td>${esc(f.module) || "—"}</td><td><span class="chip">${esc(f.fault_code) || "—"}</span></td>
+        <td>${esc(f.description) || "—"}</td><td class="muted">${esc(f.resolution) || "—"}</td>
+        <td class="muted">${fmtDate(f.created_at)}</td></tr>`).join("")}</tbody>
+    </table>` : `<div class="empty">No faults linked to this job yet.</div>`}</div>`;
+}
 
 window.jobForm = async (id) => {
   let j = {};
@@ -502,16 +556,22 @@ function faultRows(data) {
       <td class="muted">${fmtDate(f.created_at)}</td></tr>`).join("")}</tbody></table>`;
 }
 
-window.faultForm = async (id, vehicleId) => {
-  let f = { vehicle_id: vehicleId };
+window.faultForm = async (id, vehicleId, jobId) => {
+  let f = { vehicle_id: vehicleId, job_id: jobId };
   if (id) f = (await db.from("faults").select("*").eq("id", id).single()).data;
-  const { data: vehicles } = await db.from("vehicles").select("id,registration,make,model").order("created_at", { ascending: false });
+  const [{ data: vehicles }, { data: jobs }] = await Promise.all([
+    db.from("vehicles").select("id,registration,make,model").order("created_at", { ascending: false }),
+    db.from("jobs").select("id,title,job_type").order("created_at", { ascending: false }),
+  ]);
   const vOpts = vehicles.map(v =>
     `<option value="${v.id}" ${v.id === f.vehicle_id ? "selected" : ""}>${esc(`${v.registration || ""} ${v.make || ""} ${v.model || ""}`)}</option>`).join("");
+  const jOpts = jobs.map(j =>
+    `<option value="${j.id}" ${j.id === f.job_id ? "selected" : ""}>${esc(j.title || JOB_TYPES[j.job_type] || "Job")}</option>`).join("");
   openModal(id ? "Edit fault" : "Log fault", `
     <form id="fault-form-modal">
       <div class="form-grid">
-        <div class="field full"><label>Vehicle</label><select name="vehicle_id"><option value="">—</option>${vOpts}</select></div>
+        <div class="field"><label>Vehicle</label><select name="vehicle_id"><option value="">—</option>${vOpts}</select></div>
+        <div class="field"><label>Job (optional)</label><select name="job_id"><option value="">—</option>${jOpts}</select></div>
         <div class="field"><label>Module</label><input name="module" value="${esc(f.module)}" placeholder="e.g. ABS, ECU, BSI"></div>
         <div class="field"><label>Fault code</label><input name="fault_code" value="${esc(f.fault_code)}" placeholder="e.g. P0420"></div>
         <div class="field full"><label>Description</label><textarea name="description">${esc(f.description)}</textarea></div>
@@ -935,6 +995,86 @@ async function flowEditor(id) {
     location.hash = "diagnostics/" + fid;
   });
 }
+
+/* ===========================================================
+   REPORTS
+   =========================================================== */
+views.reports = async () => {
+  const [{ data: invoices }, { data: jobs }] = await Promise.all([
+    db.from("invoices").select("total,status,issue_date, customers(name)"),
+    db.from("jobs").select("status,job_type"),
+  ]);
+  const sum = (arr) => arr.reduce((s, x) => s + (Number(x.total) || 0), 0);
+  const invoiced = sum(invoices);
+  const paid = sum(invoices.filter(i => i.status === "paid"));
+  const outstanding = sum(invoices.filter(i => i.status !== "paid"));
+
+  const byMonth = {};
+  invoices.filter(i => i.status === "paid" && i.issue_date).forEach(i => {
+    const m = i.issue_date.slice(0, 7);
+    byMonth[m] = (byMonth[m] || 0) + (Number(i.total) || 0);
+  });
+  const months = Object.keys(byMonth).sort().slice(-12);
+  const maxMonth = Math.max(1, ...months.map(m => byMonth[m]));
+  const monthLabel = (m) => { const [y, mo] = m.split("-"); return new Date(y, mo - 1, 1).toLocaleDateString("en-GB", { month: "short", year: "numeric" }); };
+
+  const countBy = (arr, key, map) => {
+    const o = {};
+    arr.forEach(x => { const k = (map && map[x[key]]) || x[key] || "Unspecified"; o[k] = (o[k] || 0) + 1; });
+    return Object.entries(o).sort((a, b) => b[1] - a[1]);
+  };
+  const jobStatus = countBy(jobs, "status", Object.fromEntries(JOB_STATUS.map(s => [s, s.replace("_", " ")])));
+  const jobType = countBy(jobs, "job_type", JOB_TYPES);
+  const maxJobs = Math.max(1, jobs.length);
+
+  const custPaid = {};
+  invoices.filter(i => i.status === "paid").forEach(i => { const n = i.customers ? i.customers.name : "—"; custPaid[n] = (custPaid[n] || 0) + (Number(i.total) || 0); });
+  const topCust = Object.entries(custPaid).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const maxCust = Math.max(1, ...topCust.map(c => c[1]));
+
+  const bar = (pct, color) => `<div style="height:8px;background:var(--surface-2);border-radius:20px;overflow:hidden;flex:1"><div style="height:100%;width:${pct}%;background:${color || "var(--primary)"}"></div></div>`;
+
+  el("view").innerHTML = `
+    <div class="page-head"><div><h1>Reports</h1>
+      <div class="page-sub">Income & workload overview</div></div></div>
+
+    <div class="stats">
+      <div class="stat-card"><div class="num">${fmtMoney(invoiced)}</div><div class="label">Total invoiced</div></div>
+      <div class="stat-card"><div class="num" style="color:var(--green)">${fmtMoney(paid)}</div><div class="label">Paid</div></div>
+      <div class="stat-card"><div class="num" style="color:var(--red)">${fmtMoney(outstanding)}</div><div class="label">Outstanding</div></div>
+      <div class="stat-card"><div class="num">${jobs.length}</div><div class="label">Jobs total</div></div>
+    </div>
+
+    <div class="panel"><h3>Income by month (paid invoices)</h3>
+      ${months.length ? months.map(m => `<div style="display:flex;align-items:center;gap:12px;margin:8px 0">
+        <span class="muted" style="width:90px;font-size:13px">${monthLabel(m)}</span>
+        ${bar(byMonth[m] / maxMonth * 100, "var(--green)")}
+        <span style="width:80px;text-align:right">${fmtMoney(byMonth[m])}</span></div>`).join("")
+      : `<div class="empty">No paid invoices yet.</div>`}
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+      <div class="panel"><h3>Jobs by status</h3>
+        ${jobStatus.length ? jobStatus.map(([k, n]) => `<div style="display:flex;align-items:center;gap:12px;margin:8px 0">
+          <span class="muted" style="width:120px;font-size:13px;text-transform:capitalize">${esc(k)}</span>
+          ${bar(n / maxJobs * 100)}<span style="width:30px;text-align:right">${n}</span></div>`).join("")
+        : `<div class="empty">No jobs yet.</div>`}
+      </div>
+      <div class="panel"><h3>Jobs by type</h3>
+        ${jobType.length ? jobType.map(([k, n]) => `<div style="display:flex;align-items:center;gap:12px;margin:8px 0">
+          <span class="muted" style="width:120px;font-size:13px">${esc(k)}</span>
+          ${bar(n / maxJobs * 100, "var(--blue)")}<span style="width:30px;text-align:right">${n}</span></div>`).join("")
+        : `<div class="empty">No jobs yet.</div>`}
+      </div>
+    </div>
+
+    <div class="panel"><h3>Top customers (by paid)</h3>
+      ${topCust.length ? topCust.map(([n, amt]) => `<div style="display:flex;align-items:center;gap:12px;margin:8px 0">
+        <span class="muted" style="width:140px;font-size:13px">${esc(n)}</span>
+        ${bar(amt / maxCust * 100)}<span style="width:80px;text-align:right">${fmtMoney(amt)}</span></div>`).join("")
+      : `<div class="empty">No paid invoices yet.</div>`}
+    </div>`;
+};
 
 /* ---------- generic delete ---------- */
 window.deleteRow = async (table, id, backTo) => {
