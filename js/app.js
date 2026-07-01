@@ -414,49 +414,94 @@ const JOB_STATUS = ["booked", "in_progress", "awaiting_parts", "completed", "inv
 views.jobs = async (rest) => {
   if (rest[0]) return jobDetail(rest[0]);
   const { data } = await db.from("jobs")
-    .select("*, vehicles(registration, make, model), customers(name)")
+    .select("*, vehicles(registration, make, model, vin, ecu_type, engine), customers(name, phone, email, company)")
     .order("created_at", { ascending: false });
   el("view").innerHTML = `
     <div class="page-head"><div><h1>Jobs</h1>
-      <div class="page-sub">${data.length} total</div></div>
+      <div class="page-sub">Everything for a job in one place — customer, vehicle, files, faults & invoice</div></div>
       <button class="btn btn-primary" onclick="jobCreateForm()">+ New job</button></div>
-    <div class="table-wrap">${data.length ? `<table>
-      <thead><tr><th>Title</th><th>Type</th><th>Vehicle</th><th>Customer</th><th>Status</th><th>Price</th></tr></thead>
-      <tbody>${data.map(j => `<tr onclick="location.hash='jobs/${j.id}'">
-        <td>${esc(j.title) || "—"}</td>
-        <td>${esc(JOB_TYPES[j.job_type] || j.job_type) || "—"}</td>
-        <td>${j.vehicles ? esc(`${j.vehicles.registration || ""} ${j.vehicles.make || ""}`) : "—"}</td>
-        <td>${j.customers ? esc(j.customers.name) : "—"}</td>
-        <td><span class="badge badge-${j.status}">${esc(j.status.replace("_", " "))}</span></td>
-        <td>${fmtMoney(j.price)}</td></tr>`).join("")}</tbody>
-    </table>` : `<div class="empty">No jobs yet.</div>`}</div>`;
+    <div class="panel" style="padding:12px"><input id="job-search" autofocus
+      placeholder="🔍  Search anything — name, phone, reg, make, model, VIN, job title…"
+      style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:11px 13px;border-radius:8px;font-size:15px"></div>
+    <div class="table-wrap" id="job-table">${jobRows(data)}</div>`;
+  const all = data;
+  const search = $("#job-search");
+  search.addEventListener("input", (e) => {
+    const terms = e.target.value.toLowerCase().split(/\s+/).filter(Boolean);
+    const filtered = all.filter(j => { const h = jobHaystack(j); return terms.every(t => h.includes(t)); });
+    $("#job-table").innerHTML = jobRows(filtered);
+  });
 };
 
+function jobHaystack(j) {
+  const v = j.vehicles || {}, c = j.customers || {};
+  return [j.title, JOB_TYPES[j.job_type] || j.job_type, j.status, j.description,
+    v.registration, v.make, v.model, v.vin, v.ecu_type, v.engine,
+    c.name, c.phone, c.email, c.company].filter(Boolean).join(" ").toLowerCase();
+}
+
+function jobRows(data) {
+  if (!data.length) return `<div class="empty">No matching jobs.</div>`;
+  return `<table>
+    <thead><tr><th>Job</th><th>Customer</th><th>Vehicle</th><th>Status</th><th>Price</th></tr></thead>
+    <tbody>${data.map(j => `<tr onclick="location.hash='jobs/${j.id}'">
+      <td>${esc(j.title) || esc(JOB_TYPES[j.job_type] || j.job_type) || "Job"}</td>
+      <td>${j.customers ? esc(j.customers.name) : "—"}${j.customers && j.customers.phone ? `<div class="muted" style="font-size:12px">${esc(j.customers.phone)}</div>` : ""}</td>
+      <td>${j.vehicles ? `<span class="chip">${esc(j.vehicles.registration || "—")}</span> <span class="muted">${esc(`${j.vehicles.make || ""} ${j.vehicles.model || ""}`)}</span>` : "—"}</td>
+      <td><span class="badge badge-${j.status}">${esc(j.status.replace("_", " "))}</span></td>
+      <td>${fmtMoney(j.price)}</td></tr>`).join("")}</tbody></table>`;
+}
+
 async function jobDetail(id) {
-  const { data: j } = await db.from("jobs").select("*, vehicles(id,registration,make,model), customers(id,name)").eq("id", id).single();
+  const { data: j } = await db.from("jobs").select("*, vehicles(*), customers(*)").eq("id", id).single();
   if (!j) { el("view").innerHTML = `<div class="empty">Job not found.</div>`; return; }
-  const v = j.vehicles;
-  const { data: files } = await db.from("vehicle_files").select("*").eq("job_id", id).order("created_at", { ascending: false });
-  const { data: faults } = await db.from("faults").select("*").eq("job_id", id).order("created_at", { ascending: false });
+  const v = j.vehicles, c = j.customers;
+  const [{ data: files }, { data: faults }, { data: invoices }] = await Promise.all([
+    db.from("vehicle_files").select("*").eq("job_id", id).order("created_at", { ascending: false }),
+    db.from("faults").select("*").eq("job_id", id).order("created_at", { ascending: false }),
+    db.from("invoices").select("*").eq("job_id", id).order("created_at", { ascending: false }),
+  ]);
   el("view").innerHTML = `
     <div class="breadcrumb"><a href="#jobs">Jobs</a> / ${esc(j.title || "Job")}</div>
     <div class="page-head"><div>
       <h1>${esc(j.title || "Job")} <span class="badge badge-${j.status}">${esc(j.status.replace("_", " "))}</span></h1>
-      <div class="page-sub">${esc(JOB_TYPES[j.job_type] || j.job_type || "")}</div></div>
+      <div class="page-sub">${esc(JOB_TYPES[j.job_type] || j.job_type || "")} · ${fmtMoney(j.price)}</div></div>
       <div class="row-actions">
-        <button class="btn" onclick="jobForm('${j.id}')">Edit</button>
+        <button class="btn" onclick="jobForm('${j.id}')">Edit job</button>
         <button class="btn btn-danger" onclick="deleteRow('jobs','${j.id}','jobs')">Delete</button>
       </div></div>
 
-    <div class="panel"><h3>Details</h3>
-      <div class="form-grid">
-        <div><span class="muted">Vehicle:</span> ${v ? `<a href="#vehicles/${v.id}" style="color:var(--blue)">${esc(`${v.registration || ""} ${v.make || ""} ${v.model || ""}`)}</a>` : "—"}</div>
-        <div><span class="muted">Customer:</span> ${j.customers ? `<a href="#customers/${j.customers.id}" style="color:var(--blue)">${esc(j.customers.name)}</a>` : "—"}</div>
-        <div><span class="muted">Price:</span> ${fmtMoney(j.price)}</div>
-        <div><span class="muted">Created:</span> ${fmtDate(j.created_at)}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+      <div class="panel">
+        <div class="page-head" style="margin-bottom:10px"><h3 style="margin:0">Customer</h3>
+          <button class="btn btn-sm" onclick="${c ? `customerForm('${c.id}')` : `jobForm('${j.id}')`}">${c ? "Edit" : "Add"}</button></div>
+        ${c ? `<div><strong>${esc(c.name)}</strong></div>
+          ${c.company ? `<div class="muted">${esc(c.company)}</div>` : ""}
+          <div style="margin-top:6px">${c.phone ? `Tel: ${esc(c.phone)}` : ""}${c.phone && c.email ? " · " : ""}${c.email ? `${esc(c.email)}` : ""}</div>
+          ${c.address ? `<div class="muted" style="margin-top:4px">${esc(c.address)}</div>` : ""}`
+        : `<div class="muted">No customer linked.</div>`}
       </div>
-      ${j.description ? `<p class="muted" style="margin-top:10px">${esc(j.description)}</p>` : ""}
+      <div class="panel">
+        <div class="page-head" style="margin-bottom:10px"><h3 style="margin:0">Vehicle</h3>
+          <button class="btn btn-sm" onclick="${v ? `vehicleForm('${v.id}')` : `jobForm('${j.id}')`}">${v ? "Edit" : "Add"}</button></div>
+        ${v ? `<div><strong>${esc(`${v.make || ""} ${v.model || ""}`) || "Vehicle"}</strong> <span class="chip">${esc(v.registration || "—")}</span></div>
+          <div class="muted" style="margin-top:6px">${[v.year ? `Year ${v.year}` : "", v.engine ? esc(v.engine) : "", v.ecu_type ? `ECU ${esc(v.ecu_type)}` : "", v.gearbox ? `Gearbox ${esc(v.gearbox)}` : ""].filter(Boolean).join(" · ")}</div>
+          ${v.vin ? `<div class="muted" style="margin-top:4px">VIN: ${esc(v.vin)}</div>` : ""}`
+        : `<div class="muted">No vehicle linked.</div>`}
+      </div>
     </div>
+
+    ${j.description ? `<div class="panel"><h3>Notes</h3><p class="muted" style="white-space:pre-wrap">${esc(j.description)}</p></div>` : ""}
+
+    <div class="page-head"><h1 style="font-size:18px">Invoice</h1>
+      <button class="btn btn-primary btn-sm" onclick="location.hash='invoices/new/${j.id}'">+ Create invoice</button></div>
+    <div class="table-wrap" style="margin-bottom:24px">${invoices.length ? `<table>
+      <thead><tr><th>Number</th><th>Issued</th><th>Total</th><th>Status</th><th></th></tr></thead>
+      <tbody>${invoices.map(i => `<tr>
+        <td>${esc(i.invoice_number) || "—"}</td><td class="muted">${fmtDate(i.issue_date)}</td>
+        <td>${fmtMoney(i.total)}</td><td><span class="badge badge-${i.status}">${esc(i.status)}</span></td>
+        <td class="row-actions"><button class="btn btn-sm" onclick="location.hash='invoices/${i.id}'">View / Print</button></td></tr>`).join("")}</tbody>
+    </table>` : `<div class="empty">No invoice yet. Click "Create invoice" to bill this job.</div>`}</div>
 
     <div class="page-head"><h1 style="font-size:18px">Files</h1>
       ${v ? `<button class="btn btn-primary btn-sm" onclick="fileUploadForm('${v.id}','${j.id}')">+ Upload file</button>` : ""}</div>
@@ -716,7 +761,7 @@ function nextInvoiceNumber(existing) {
 }
 
 views.invoices = async (rest) => {
-  if (rest[0] === "new") return invoiceEditor(null);
+  if (rest[0] === "new") return invoiceEditor(null, rest[1]);
   if (rest[0] && rest[1] === "edit") return invoiceEditor(rest[0]);
   if (rest[0]) return invoiceView(rest[0]);
   const { data } = await db.from("invoices").select("*, customers(name)").order("created_at", { ascending: false });
@@ -769,7 +814,7 @@ window.invAddJobLine = (sel) => {
   invRecalc();
 };
 
-async function invoiceEditor(id) {
+async function invoiceEditor(id, jobId) {
   const [{ data: settings }, { data: customers }, { data: jobs }] = await Promise.all([
     db.from("business_settings").select("*").eq("id", true).single(),
     db.from("customers").select("id,name").order("name"),
@@ -783,7 +828,12 @@ async function invoiceEditor(id) {
   } else {
     const all = (await db.from("invoices").select("invoice_number")).data || [];
     inv.invoice_number = nextInvoiceNumber(all.map(x => x.invoice_number));
+    if (jobId) {
+      const { data: job } = await db.from("jobs").select("title,price,customer_id").eq("id", jobId).single();
+      if (job) { inv.customer_id = job.customer_id; items = [{ description: job.title || "", quantity: 1, unit_price: job.price ?? 0 }]; }
+    }
   }
+  const curJobId = id ? (inv.job_id || null) : (jobId || null);
   if (!items.length) items = [{ description: "", quantity: 1, unit_price: 0 }];
 
   const custOpts = customers.map(c => `<option value="${c.id}" ${c.id === inv.customer_id ? "selected" : ""}>${esc(c.name)}</option>`).join("");
@@ -791,7 +841,7 @@ async function invoiceEditor(id) {
   const statusOpts = INV_STATUS.map(s => `<option value="${s}" ${s === inv.status ? "selected" : ""}>${s}</option>`).join("");
 
   el("view").innerHTML = `
-    <div class="breadcrumb"><a href="#invoices">Invoices</a> / ${id ? esc(inv.invoice_number) : "New"}</div>
+    <div class="breadcrumb"><a href="#${curJobId ? `jobs/${curJobId}` : "jobs"}">${curJobId ? "Job" : "Jobs"}</a> / ${id ? esc(inv.invoice_number) : "New invoice"}</div>
     <div class="page-head"><h1>${id ? "Edit invoice" : "New invoice"}</h1></div>
     <form id="inv-form">
       <div class="panel">
@@ -825,7 +875,7 @@ async function invoiceEditor(id) {
       </div>
 
       <div class="form-actions">
-        <button type="button" class="btn btn-ghost" onclick="location.hash='invoices'">Cancel</button>
+        <button type="button" class="btn btn-ghost" onclick="location.hash='${curJobId ? `jobs/${curJobId}` : "jobs"}'">Cancel</button>
         <button type="submit" class="btn btn-primary">${id ? "Save invoice" : "Create invoice"}</button>
       </div>
     </form>`;
@@ -847,6 +897,7 @@ async function invoiceEditor(id) {
     const tax_amount = subtotal * tax_rate / 100;
     const payload = {
       customer_id: f.customer_id.value || null,
+      job_id: curJobId,
       invoice_number: f.invoice_number.value.trim() || null,
       status: f.status.value,
       issue_date: f.issue_date.value || null,
@@ -885,14 +936,14 @@ async function invoiceView(id) {
   const bizLine = (x) => x ? `<div>${esc(x)}</div>` : "";
 
   el("view").innerHTML = `
-    <div class="page-head no-print"><div class="breadcrumb"><a href="#invoices">Invoices</a> / ${esc(inv.invoice_number)}</div>
+    <div class="page-head no-print"><div class="breadcrumb"><a href="#${inv.job_id ? `jobs/${inv.job_id}` : "jobs"}">${inv.job_id ? "Job" : "Jobs"}</a> / ${esc(inv.invoice_number)}</div>
       <div class="row-actions">
         <select onchange="invSetStatus('${id}', this.value)" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:8px">
           ${INV_STATUS.map(st => `<option value="${st}" ${st === inv.status ? "selected" : ""}>${st}</option>`).join("")}
         </select>
         <button class="btn" onclick="location.hash='invoices/${id}/edit'">Edit</button>
         <button class="btn btn-primary" onclick="window.print()">Print / Save PDF</button>
-        <button class="btn btn-danger" onclick="deleteRow('invoices','${id}','invoices')">Delete</button>
+        <button class="btn btn-danger" onclick="deleteRow('invoices','${id}','${inv.job_id ? `jobs/${inv.job_id}` : "jobs"}')">Delete</button>
       </div></div>
 
     <div class="invoice-doc">
