@@ -259,6 +259,25 @@ views.vehicles = async (rest) => {
     </table>` : `<div class="empty">No vehicles yet.</div>`}</div>`;
 };
 
+// DVLA/MOT reg lookup — fills make/model/year/engine. `prefix` is "" (vehicle form) or "v_" (job form).
+window.lookupVehicle = async (btn, prefix) => {
+  const form = btn.closest("form");
+  const regEl = form.querySelector(`[name="${prefix}registration"]`);
+  const reg = (regEl && regEl.value || "").trim();
+  if (!reg) return toast("Enter a registration first", "error");
+  const orig = btn.textContent;
+  btn.textContent = "…"; btn.disabled = true;
+  try {
+    const { data, error } = await db.functions.invoke("lookup-vehicle", { body: { reg } });
+    if (error || !data || data.error) return toast("Lookup failed: " + ((data && data.error) || (error && error.message) || "not found"), "error");
+    const set = (n, val) => { const i = form.querySelector(`[name="${prefix}${n}"]`); if (i && val != null && val !== "") i.value = val; };
+    set("make", data.make); set("model", data.model); set("year", data.year); set("engine", data.engine);
+    const bits = [data.make, data.model, data.year].filter(Boolean).join(" ");
+    toast(bits ? "Found: " + bits : "No details found for that reg", bits ? "success" : "error");
+  } catch (e) { toast("Lookup error: " + e.message, "error"); }
+  finally { btn.textContent = orig; btn.disabled = false; }
+};
+
 window.vehicleForm = async (id, presetCustomer) => {
   let v = { customer_id: presetCustomer };
   if (id) v = (await db.from("vehicles").select("*").eq("id", id).single()).data;
@@ -269,7 +288,11 @@ window.vehicleForm = async (id, presetCustomer) => {
     <form id="veh-form">
       <div class="form-grid">
         <div class="field full"><label>Customer</label><select name="customer_id"><option value="">—</option>${opts}</select></div>
-        <div class="field"><label>Registration</label><input name="registration" value="${esc(v.registration)}"></div>
+        <div class="field"><label>Registration</label>
+          <div style="display:flex;gap:6px">
+            <input name="registration" value="${esc(v.registration)}" style="flex:1;min-width:0">
+            <button type="button" class="btn btn-sm" onclick="lookupVehicle(this,'')">Look up</button>
+          </div></div>
         <div class="field"><label>Year</label><input name="year" data-type="number" value="${v.year || ""}"></div>
         <div class="field"><label>Make</label><input name="make" value="${esc(v.make)}"></div>
         <div class="field"><label>Model</label><input name="model" value="${esc(v.model)}"></div>
@@ -606,7 +629,11 @@ window.jobCreateForm = async () => {
         <select id="jn-veh" onchange="jnToggleVeh()"><option value="">＋ Add new vehicle</option>${vehOpts}</select>
       </div>
       <div id="jn-veh-fields" class="form-grid" style="margin-bottom:20px">
-        <div class="field"><label>Registration</label><input name="v_registration"></div>
+        <div class="field"><label>Registration</label>
+          <div style="display:flex;gap:6px">
+            <input name="v_registration" style="flex:1;min-width:0">
+            <button type="button" class="btn btn-sm" onclick="lookupVehicle(this,'v_')">Look up</button>
+          </div></div>
         <div class="field"><label>Year</label><input name="v_year"></div>
         <div class="field"><label>Make</label><input name="v_make"></div>
         <div class="field"><label>Model</label><input name="v_model"></div>
