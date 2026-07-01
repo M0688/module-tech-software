@@ -13,6 +13,7 @@ const esc = (s) => (s == null ? "" : String(s).replace(/[&<>"']/g, c =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])));
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-GB") : "—";
 const fmtMoney = (n) => n == null ? "—" : "£" + Number(n).toFixed(2);
+const fmtJobNo = (n) => n == null ? "—" : "JOB-" + String(n).padStart(4, "0");
 const fmtBytes = (b) => {
   if (b == null) return "";
   if (b < 1024) return b + " B";
@@ -151,8 +152,8 @@ views.dashboard = async () => {
     <div class="panel"><h3>Recent jobs</h3>
       ${recentJobs && recentJobs.length ? `<div class="table-wrap"><table>
         <thead><tr><th>Job</th><th>Vehicle</th><th>Customer</th><th>Status</th><th>Date</th></tr></thead>
-        <tbody>${recentJobs.map(j => `<tr onclick="location.hash='jobs'">
-          <td>${esc(j.title || j.job_type || "Job")}</td>
+        <tbody>${recentJobs.map(j => `<tr onclick="location.hash='jobs/${j.id}'">
+          <td><strong>${fmtJobNo(j.job_number)}</strong></td>
           <td>${j.vehicles ? esc(`${j.vehicles.registration || ""} ${j.vehicles.make || ""} ${j.vehicles.model || ""}`) : "—"}</td>
           <td>${j.customers ? esc(j.customers.name) : "—"}</td>
           <td><span class="badge badge-${j.status}">${esc(j.status.replace("_", " "))}</span></td>
@@ -348,8 +349,8 @@ async function vehicleDetail(id) {
 
 /* ---------- File upload / download ---------- */
 window.fileUploadForm = async (vehicleId, jobId) => {
-  const { data: jobs } = await db.from("jobs").select("id,title,job_type").eq("vehicle_id", vehicleId).order("created_at", { ascending: false });
-  const jobOpts = (jobs || []).map(j => `<option value="${j.id}" ${j.id === jobId ? "selected" : ""}>${esc(j.title || JOB_TYPES[j.job_type] || "Job")}</option>`).join("");
+  const { data: jobs } = await db.from("jobs").select("id,job_number,job_type").eq("vehicle_id", vehicleId).order("created_at", { ascending: false });
+  const jobOpts = (jobs || []).map(j => `<option value="${j.id}" ${j.id === jobId ? "selected" : ""}>${esc(fmtJobNo(j.job_number))}${j.job_type ? " — " + esc(JOB_TYPES[j.job_type] || j.job_type) : ""}</option>`).join("");
   openModal("Upload file", `
     <form id="file-form">
       <div class="form-grid">
@@ -435,7 +436,7 @@ views.jobs = async (rest) => {
 
 function jobHaystack(j) {
   const v = j.vehicles || {}, c = j.customers || {};
-  return [j.title, JOB_TYPES[j.job_type] || j.job_type, j.status, j.description,
+  return [fmtJobNo(j.job_number), String(j.job_number || ""), JOB_TYPES[j.job_type] || j.job_type, j.status, j.description,
     v.registration, v.make, v.model, v.vin, v.ecu_type, v.engine,
     c.name, c.phone, c.email, c.company].filter(Boolean).join(" ").toLowerCase();
 }
@@ -443,9 +444,10 @@ function jobHaystack(j) {
 function jobRows(data) {
   if (!data.length) return `<div class="empty">No matching jobs.</div>`;
   return `<table>
-    <thead><tr><th>Job</th><th>Customer</th><th>Vehicle</th><th>Status</th><th>Price</th></tr></thead>
+    <thead><tr><th>Job</th><th>Type</th><th>Customer</th><th>Vehicle</th><th>Status</th><th>Price</th></tr></thead>
     <tbody>${data.map(j => `<tr onclick="location.hash='jobs/${j.id}'">
-      <td>${esc(j.title) || esc(JOB_TYPES[j.job_type] || j.job_type) || "Job"}</td>
+      <td><strong>${fmtJobNo(j.job_number)}</strong></td>
+      <td>${esc(JOB_TYPES[j.job_type] || j.job_type) || "—"}</td>
       <td>${j.customers ? esc(j.customers.name) : "—"}${j.customers && j.customers.phone ? `<div class="muted" style="font-size:12px">${esc(j.customers.phone)}</div>` : ""}</td>
       <td>${j.vehicles ? `<span class="chip">${esc(j.vehicles.registration || "—")}</span> <span class="muted">${esc(`${j.vehicles.make || ""} ${j.vehicles.model || ""}`)}</span>` : "—"}</td>
       <td><span class="badge badge-${j.status}">${esc(j.status.replace("_", " "))}</span></td>
@@ -462,9 +464,9 @@ async function jobDetail(id) {
     db.from("invoices").select("*").eq("job_id", id).order("created_at", { ascending: false }),
   ]);
   el("view").innerHTML = `
-    <div class="breadcrumb"><a href="#jobs">Jobs</a> / ${esc(j.title || "Job")}</div>
+    <div class="breadcrumb"><a href="#jobs">Jobs</a> / ${fmtJobNo(j.job_number)}</div>
     <div class="page-head"><div>
-      <h1>${esc(j.title || "Job")} <span class="badge badge-${j.status}">${esc(j.status.replace("_", " "))}</span></h1>
+      <h1>${fmtJobNo(j.job_number)} <span class="badge badge-${j.status}">${esc(j.status.replace("_", " "))}</span></h1>
       <div class="page-sub">${esc(JOB_TYPES[j.job_type] || j.job_type || "")} · ${fmtMoney(j.price)}</div></div>
       <div class="row-actions">
         <button class="btn" onclick="jobForm('${j.id}')">Edit job</button>
@@ -537,10 +539,9 @@ window.jobForm = async (id) => {
     `<option value="${k}" ${k === j.job_type ? "selected" : ""}>${label}</option>`).join("");
   const statusOpts = JOB_STATUS.map(s =>
     `<option value="${s}" ${s === j.status ? "selected" : ""}>${s.replace("_", " ")}</option>`).join("");
-  openModal(id ? "Edit job" : "New job", `
+  openModal(id ? `Edit ${fmtJobNo(j.job_number)}` : "New job", `
     <form id="job-form">
       <div class="form-grid">
-        <div class="field full"><label>Title</label><input name="title" value="${esc(j.title)}" placeholder="e.g. Stage 1 remap"></div>
         <div class="field"><label>Type</label><select name="job_type"><option value="">—</option>${typeOpts}</select></div>
         <div class="field"><label>Status</label><select name="status">${statusOpts}</select></div>
         <div class="field full"><label>Vehicle</label><select name="vehicle_id" id="job-vehicle"><option value="">—</option>${vOpts}</select></div>
@@ -616,8 +617,8 @@ window.jobCreateForm = async () => {
       </div>
 
       ${hd("Job")}
+      <div class="muted" style="font-size:13px;margin-bottom:10px">A job number is assigned automatically.</div>
       <div class="form-grid">
-        <div class="field full"><label>Title</label><input name="title" placeholder="e.g. Stage 1 remap"></div>
         <div class="field"><label>Type</label><select name="job_type"><option value="">—</option>${typeOpts}</select></div>
         <div class="field"><label>Status</label><select name="status">${statusOpts}</select></div>
         <div class="field"><label>Price (£)</label><input name="price"></div>
@@ -669,7 +670,7 @@ window.jobCreateForm = async () => {
 
     const { error } = await db.from("jobs").insert({
       vehicle_id: vehicleId, customer_id: customerId,
-      title: val("title"), job_type: f.job_type.value || null,
+      job_type: f.job_type.value || null,
       status: f.status.value || "booked", price: val("price") ? Number(val("price")) : null,
       description: val("description"),
     });
@@ -715,12 +716,12 @@ window.faultForm = async (id, vehicleId, jobId) => {
   if (id) f = (await db.from("faults").select("*").eq("id", id).single()).data;
   const [{ data: vehicles }, { data: jobs }] = await Promise.all([
     db.from("vehicles").select("id,registration,make,model").order("created_at", { ascending: false }),
-    db.from("jobs").select("id,title,job_type").order("created_at", { ascending: false }),
+    db.from("jobs").select("id,job_number,job_type").order("created_at", { ascending: false }),
   ]);
   const vOpts = vehicles.map(v =>
     `<option value="${v.id}" ${v.id === f.vehicle_id ? "selected" : ""}>${esc(`${v.registration || ""} ${v.make || ""} ${v.model || ""}`)}</option>`).join("");
   const jOpts = jobs.map(j =>
-    `<option value="${j.id}" ${j.id === f.job_id ? "selected" : ""}>${esc(j.title || JOB_TYPES[j.job_type] || "Job")}</option>`).join("");
+    `<option value="${j.id}" ${j.id === f.job_id ? "selected" : ""}>${esc(fmtJobNo(j.job_number))}${j.job_type ? " — " + esc(JOB_TYPES[j.job_type] || j.job_type) : ""}</option>`).join("");
   openModal(id ? "Edit fault" : "Log fault", `
     <form id="fault-form-modal">
       <div class="form-grid">
@@ -818,7 +819,7 @@ async function invoiceEditor(id, jobId) {
   const [{ data: settings }, { data: customers }, { data: jobs }] = await Promise.all([
     db.from("business_settings").select("*").eq("id", true).single(),
     db.from("customers").select("id,name").order("name"),
-    db.from("jobs").select("id,title,price,customer_id").order("created_at", { ascending: false }),
+    db.from("jobs").select("id,job_number,job_type,description,price,customer_id").order("created_at", { ascending: false }),
   ]);
   let inv = { status: "draft", issue_date: new Date().toISOString().slice(0, 10), tax_rate: settings?.default_tax_rate ?? 0 };
   let items = [];
@@ -829,15 +830,20 @@ async function invoiceEditor(id, jobId) {
     const all = (await db.from("invoices").select("invoice_number")).data || [];
     inv.invoice_number = nextInvoiceNumber(all.map(x => x.invoice_number));
     if (jobId) {
-      const { data: job } = await db.from("jobs").select("title,price,customer_id").eq("id", jobId).single();
-      if (job) { inv.customer_id = job.customer_id; items = [{ description: job.title || "", quantity: 1, unit_price: job.price ?? 0 }]; }
+      const { data: job } = await db.from("jobs").select("job_number,job_type,description,price,customer_id").eq("id", jobId).single();
+      if (job) {
+        inv.customer_id = job.customer_id;
+        const d = job.description || JOB_TYPES[job.job_type] || job.job_type || fmtJobNo(job.job_number);
+        items = [{ description: d, quantity: 1, unit_price: job.price ?? 0 }];
+      }
     }
   }
   const curJobId = id ? (inv.job_id || null) : (jobId || null);
   if (!items.length) items = [{ description: "", quantity: 1, unit_price: 0 }];
 
   const custOpts = customers.map(c => `<option value="${c.id}" ${c.id === inv.customer_id ? "selected" : ""}>${esc(c.name)}</option>`).join("");
-  const jobOpts = jobs.map(j => `<option value="${j.id}" data-title="${esc(j.title || "Job")}" data-price="${j.price ?? 0}" data-cust="${j.customer_id || ""}">${esc(j.title || "Job")} ${j.price != null ? "— " + fmtMoney(j.price) : ""}</option>`).join("");
+  const jobLineDesc = (j) => j.description || JOB_TYPES[j.job_type] || j.job_type || fmtJobNo(j.job_number);
+  const jobOpts = jobs.map(j => `<option value="${j.id}" data-title="${esc(jobLineDesc(j))}" data-price="${j.price ?? 0}" data-cust="${j.customer_id || ""}">${esc(fmtJobNo(j.job_number))}${j.job_type ? " — " + esc(JOB_TYPES[j.job_type] || j.job_type) : ""}${j.price != null ? " (" + fmtMoney(j.price) + ")" : ""}</option>`).join("");
   const statusOpts = INV_STATUS.map(s => `<option value="${s}" ${s === inv.status ? "selected" : ""}>${s}</option>`).join("");
 
   el("view").innerHTML = `
