@@ -259,23 +259,27 @@ views.vehicles = async (rest) => {
     </table>` : `<div class="empty">No vehicles yet.</div>`}</div>`;
 };
 
-// DVLA/MOT reg lookup — fills make/model/year/engine. `prefix` is "" (vehicle form) or "v_" (job form).
-window.lookupVehicle = async (btn, prefix) => {
-  const form = btn.closest("form");
+// DVLA/MOT reg lookup — auto-fills make/model/year/engine on tab-out of the reg field.
+// prefix is "" (vehicle form) or "v_" (job form).
+async function runLookup(form, prefix) {
   const regEl = form.querySelector(`[name="${prefix}registration"]`);
   const reg = (regEl && regEl.value || "").trim();
-  if (!reg) return toast("Enter a registration first", "error");
-  const orig = btn.textContent;
-  btn.textContent = "…"; btn.disabled = true;
+  if (!reg) return;
   try {
     const { data, error } = await db.functions.invoke("lookup-vehicle", { body: { reg } });
-    if (error || !data || data.error) return toast("Lookup failed: " + ((data && data.error) || (error && error.message) || "not found"), "error");
+    if (error || !data || data.error) return; // stay quiet on failure (e.g. partial reg)
     const set = (n, val) => { const i = form.querySelector(`[name="${prefix}${n}"]`); if (i && val != null && val !== "") i.value = val; };
     set("make", data.make); set("model", data.model); set("year", data.year); set("engine", data.engine);
     const bits = [data.make, data.model, data.year].filter(Boolean).join(" ");
-    toast(bits ? "Found: " + bits : "No details found for that reg", bits ? "success" : "error");
-  } catch (e) { toast("Lookup error: " + e.message, "error"); }
-  finally { btn.textContent = orig; btn.disabled = false; }
+    if (bits) toast("Found: " + bits, "success");
+  } catch (_) { /* silent */ }
+}
+// Fires on blur; only looks up when the reg actually changed (so it never clobbers an edit).
+window.autoLookup = (input, prefix) => {
+  const norm = (input.value || "").trim().toUpperCase().replace(/\s+/g, "");
+  if (!norm || input.dataset.looked === norm) return;
+  input.dataset.looked = norm;
+  runLookup(input.closest("form"), prefix);
 };
 
 window.vehicleForm = async (id, presetCustomer) => {
@@ -288,11 +292,8 @@ window.vehicleForm = async (id, presetCustomer) => {
     <form id="veh-form">
       <div class="form-grid">
         <div class="field full"><label>Customer</label><select name="customer_id"><option value="">—</option>${opts}</select></div>
-        <div class="field"><label>Registration</label>
-          <div style="display:flex;gap:6px">
-            <input name="registration" value="${esc(v.registration)}" style="flex:1;min-width:0">
-            <button type="button" class="btn btn-sm" onclick="lookupVehicle(this,'')">Look up</button>
-          </div></div>
+        <div class="field"><label>Registration <span class="muted" style="font-weight:400">— auto-fills on tab</span></label>
+          <input name="registration" value="${esc(v.registration)}" data-looked="${esc((v.registration || "").toUpperCase().replace(/\s+/g, ""))}" onblur="autoLookup(this,'')"></div>
         <div class="field"><label>Year</label><input name="year" data-type="number" value="${v.year || ""}"></div>
         <div class="field"><label>Make</label><input name="make" value="${esc(v.make)}"></div>
         <div class="field"><label>Model</label><input name="model" value="${esc(v.model)}"></div>
@@ -629,11 +630,8 @@ window.jobCreateForm = async () => {
         <select id="jn-veh" onchange="jnToggleVeh()"><option value="">＋ Add new vehicle</option>${vehOpts}</select>
       </div>
       <div id="jn-veh-fields" class="form-grid" style="margin-bottom:20px">
-        <div class="field"><label>Registration</label>
-          <div style="display:flex;gap:6px">
-            <input name="v_registration" style="flex:1;min-width:0">
-            <button type="button" class="btn btn-sm" onclick="lookupVehicle(this,'v_')">Look up</button>
-          </div></div>
+        <div class="field"><label>Registration <span class="muted" style="font-weight:400">— auto-fills on tab</span></label>
+          <input name="v_registration" data-looked="" onblur="autoLookup(this,'v_')"></div>
         <div class="field"><label>Year</label><input name="v_year"></div>
         <div class="field"><label>Make</label><input name="v_make"></div>
         <div class="field"><label>Model</label><input name="v_model"></div>
