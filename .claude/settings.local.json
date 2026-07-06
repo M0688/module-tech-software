@@ -26,7 +26,8 @@
       "mcp__3e39bf3e-60c9-4d6b-9128-1d8bf524eac3__deploy_edge_function",
       "Bash(git commit -q -m 'Reg lookup: auto-fill on tab-out \\(blur\\), remove manual button *)",
       "Bash(git commit -q -m 'Multi-file upload + per-file labelling; delete customers/vehicles; remove fault logging *)",
-      "Bash(git commit -q -m 'Deleting a job now also deletes its invoices \\(+ items\\) and files *)"
+      "Bash(git commit -q -m 'Deleting a job now also deletes its invoices \\(+ items\\) and files *)",
+      "Bash(git commit -q -m 'Diagnostics: capturable input fields per step, linked to a job *)"
     ]
   }
 }

@@ -235,6 +235,13 @@ tbody tr:last-child td { border-bottom: none; }
 .step-edit-row .step-edit-fields { flex: 1; display: flex; flex-direction: column; gap: 6px; }
 .step-edit-row input, .step-edit-row textarea { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 8px 10px; border-radius: 7px; font-size: 13px; font-family: inherit; }
 .step-edit-row textarea { resize: vertical; min-height: 44px; }
+.se-fields { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.se-field-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.se-field-row { display: flex; gap: 6px; align-items: center; }
+.se-field-row .sef-label { flex: 1; background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 7px 9px; border-radius: 7px; font-size: 13px; }
+.se-field-row .sef-type { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 7px 9px; border-radius: 7px; font-size: 13px; width: 130px; }
+.diag-photo { max-width: 240px; max-height: 200px; border-radius: 8px; border: 1px solid var(--border); display: block; cursor: pointer; background: var(--surface-2); }
+.ro-val { padding: 2px 0; white-space: pre-wrap; }
 .step-move { display: flex; flex-direction: column; gap: 2px; }
 .step-move button { background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); border-radius: 5px; cursor: pointer; width: 24px; line-height: 18px; }
 .step-move button:hover { color: var(--text); }

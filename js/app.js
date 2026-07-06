@@ -505,9 +505,10 @@ async function jobDetail(id) {
   const { data: j } = await db.from("jobs").select("*, vehicles(*), customers(*)").eq("id", id).single();
   if (!j) { el("view").innerHTML = `<div class="empty">Job not found.</div>`; return; }
   const v = j.vehicles, c = j.customers;
-  const [{ data: files }, { data: invoices }] = await Promise.all([
+  const [{ data: files }, { data: invoices }, { data: diagRuns }] = await Promise.all([
     db.from("vehicle_files").select("*").eq("job_id", id).order("created_at", { ascending: false }),
     db.from("invoices").select("*").eq("job_id", id).order("created_at", { ascending: false }),
+    db.from("diagnostic_runs").select("id,title,created_at").eq("job_id", id).order("created_at", { ascending: false }),
   ]);
   el("view").innerHTML = `
     <div class="breadcrumb"><a href="#jobs">Jobs</a> / ${fmtJobNo(j.job_number)}</div>
@@ -563,7 +564,16 @@ async function jobDetail(id) {
           <button class="btn btn-sm" onclick="downloadFile('${esc(f.storage_path)}','${esc(f.original_name)}')">Download</button>
           <button class="btn btn-sm btn-danger" onclick="deleteFile('${f.id}','${esc(f.storage_path)}')">Delete</button>
         </div></div>`).join("") : `<div class="empty">No files linked to this job yet.</div>`}
-    </div>`;
+    </div>
+
+    <div class="page-head"><h1 style="font-size:18px">Diagnostics</h1>
+      <button class="btn btn-primary btn-sm" onclick="pickDiagnostic('${j.id}')">+ New diagnostic</button></div>
+    <div class="table-wrap">${diagRuns.length ? `<table>
+      <thead><tr><th>Diagnostic</th><th>Recorded</th><th></th></tr></thead>
+      <tbody>${diagRuns.map(r => `<tr onclick="location.hash='diagnostics/view/${r.id}'">
+        <td>${esc(r.title || "Diagnostic")}</td><td class="muted">${fmtDate(r.created_at)}</td>
+        <td class="row-actions"><button class="btn btn-sm" onclick="event.stopPropagation();location.hash='diagnostics/view/${r.id}'">View</button></td></tr>`).join("")}</tbody>
+    </table>` : `<div class="empty">No diagnostics recorded for this job yet.</div>`}</div>`;
 }
 
 // Delete a job and everything attached to it (invoices + items, and the job's files incl. storage).
@@ -1015,69 +1025,179 @@ views.settings = async () => {
   });
 };
 
+const FIELD_TYPES = [["text", "Text"], ["number", "Number"], ["textarea", "Long text"], ["photo", "Photo / file"]];
+
+window.openFile = async (path) => {
+  const { data, error } = await db.storage.from(cfg.FILE_BUCKET).createSignedUrl(path, 120);
+  if (error) return toast(error.message, "error");
+  window.open(data.signedUrl, "_blank");
+};
+
+// Pick a template to run against a specific job (from the job page).
+window.pickDiagnostic = async (jobId) => {
+  const { data: flows } = await db.from("diagnostic_flows").select("id,title,category,steps").order("title");
+  if (!flows || !flows.length) return toast("No templates yet — create one in Diagnostics", "error");
+  openModal("Start a diagnostic", `<div style="display:flex;flex-direction:column;gap:8px">
+    ${flows.map(f => `<button type="button" class="btn" style="justify-content:flex-start;text-align:left" onclick="closeModalGlobal();location.hash='diagnostics/run/${f.id}/${jobId}'">
+      <div><div>${esc(f.title)}</div><div class="muted" style="font-size:12px">${(f.steps || []).length} steps${f.category ? " · " + esc(f.category) : ""}</div></div>
+    </button>`).join("")}
+  </div>`);
+};
+
 views.diagnostics = async (rest) => {
   if (rest[0] === "new") return flowEditor(null);
-  if (rest[0] && rest[1] === "edit") return flowEditor(rest[0]);
-  if (rest[0]) return flowRun(rest[0]);
+  if (rest[0] === "edit") return flowEditor(rest[1]);
+  if (rest[0] === "run") return flowRunForm(rest[1], rest[2]);
+  if (rest[0] === "view") return flowRunView(rest[1]);
   const { data } = await db.from("diagnostic_flows").select("*").order("category").order("title");
   el("view").innerHTML = `
-    <div class="page-head"><div><h1>Diagnostic flows</h1>
-      <div class="page-sub">Step-by-step guides you can follow & tick off during a job</div></div>
-      <button class="btn btn-primary" onclick="location.hash='diagnostics/new'">+ New flow</button></div>
+    <div class="page-head"><div><h1>Diagnostics</h1>
+      <div class="page-sub">Fill-in checklists that capture readings & photos against a job</div></div>
+      <button class="btn btn-primary" onclick="location.hash='diagnostics/new'">+ New template</button></div>
     ${data.length ? `<div class="flow-grid">${data.map(f => `
-      <div class="flow-card" onclick="location.hash='diagnostics/${f.id}'">
-        ${f.category ? `<div class="cat">${esc(f.category)}</div>` : ""}
-        <h3>${esc(f.title)}</h3>
-        ${f.summary ? `<div class="muted" style="font-size:13px">${esc(f.summary)}</div>` : ""}
-        <div class="count">${(f.steps || []).length} step${(f.steps || []).length === 1 ? "" : "s"}</div>
-      </div>`).join("")}</div>`
-    : `<div class="empty">No diagnostic flows yet. Click "New flow" to build your first guided procedure.</div>`}`;
-};
-
-window.flowToggle = (cb) => {
-  cb.closest(".step-item").classList.toggle("done", cb.checked);
-  const total = document.querySelectorAll(".step-item").length;
-  const done = document.querySelectorAll(".step-item.done").length;
-  el("flow-progress-fill").style.width = (total ? done / total * 100 : 0) + "%";
-  el("flow-progress-text").textContent = `${done} of ${total} done`;
-};
-window.flowReset = () => {
-  document.querySelectorAll(".step-item input").forEach(c => { c.checked = false; c.closest(".step-item").classList.remove("done"); });
-  const total = document.querySelectorAll(".step-item").length;
-  el("flow-progress-fill").style.width = "0%";
-  el("flow-progress-text").textContent = `0 of ${total} done`;
-};
-
-async function flowRun(id) {
-  const { data: f } = await db.from("diagnostic_flows").select("*").eq("id", id).single();
-  if (!f) { el("view").innerHTML = `<div class="empty">Flow not found.</div>`; return; }
-  const steps = f.steps || [];
-  el("view").innerHTML = `
-    <div class="breadcrumb"><a href="#diagnostics">Diagnostic flows</a> / ${esc(f.title)}</div>
-    <div class="page-head"><div>
-      ${f.category ? `<div class="cat" style="color:var(--primary);font-size:12px;font-weight:600;text-transform:uppercase">${esc(f.category)}</div>` : ""}
-      <h1>${esc(f.title)}</h1>
-      ${f.summary ? `<div class="page-sub">${esc(f.summary)}</div>` : ""}</div>
-      <div class="row-actions">
-        <button class="btn" onclick="flowReset()">Reset</button>
-        <button class="btn" onclick="location.hash='diagnostics/${id}/edit'">Edit</button>
-        <button class="btn btn-danger" onclick="deleteRow('diagnostic_flows','${id}','diagnostics')">Delete</button>
-      </div></div>
-    <div class="progress-bar"><div class="progress-fill" id="flow-progress-fill"></div></div>
-    <div class="page-sub" id="flow-progress-text" style="margin-bottom:18px">0 of ${steps.length} done</div>
-    ${steps.length ? steps.map((s, i) => `
-      <div class="step-item">
-        <input type="checkbox" onchange="flowToggle(this)">
-        <div class="step-num">${i + 1}</div>
-        <div class="step-body">
-          <div class="step-title">${esc(s.title)}</div>
-          ${s.detail ? `<div class="step-detail">${esc(s.detail)}</div>` : ""}
+      <div class="flow-card">
+        <div onclick="location.hash='diagnostics/run/${f.id}'" style="cursor:pointer">
+          ${f.category ? `<div class="cat">${esc(f.category)}</div>` : ""}
+          <h3>${esc(f.title)}</h3>
+          ${f.summary ? `<div class="muted" style="font-size:13px">${esc(f.summary)}</div>` : ""}
+          <div class="count">${(f.steps || []).length} step${(f.steps || []).length === 1 ? "" : "s"}</div>
         </div>
-      </div>`).join("")
-    : `<div class="empty">This flow has no steps yet. Click Edit to add some.</div>`}`;
+        <div class="row-actions" style="margin-top:10px">
+          <button class="btn btn-sm btn-primary" onclick="location.hash='diagnostics/run/${f.id}'">Start</button>
+          <button class="btn btn-sm" onclick="location.hash='diagnostics/edit/${f.id}'">Edit template</button>
+        </div>
+      </div>`).join("")}</div>`
+    : `<div class="empty">No templates yet. Click "New template" to build your first one.</div>`}`;
+};
+
+// Fill-in capture form: run a template against a job, capturing readings + photos.
+async function flowRunForm(flowId, presetJobId) {
+  const [{ data: f }, { data: jobs }] = await Promise.all([
+    db.from("diagnostic_flows").select("*").eq("id", flowId).single(),
+    db.from("jobs").select("id,job_number,customers(name),vehicles(registration)").order("job_number", { ascending: false }),
+  ]);
+  if (!f) { el("view").innerHTML = `<div class="empty">Template not found.</div>`; return; }
+  const steps = f.steps || [];
+  const jobOpts = (jobs || []).map(j => `<option value="${j.id}" ${j.id === presetJobId ? "selected" : ""}>${esc(fmtJobNo(j.job_number))}${j.customers ? " — " + esc(j.customers.name) : ""}${j.vehicles ? " (" + esc(j.vehicles.registration || "") + ")" : ""}</option>`).join("");
+
+  const fieldInput = (si, fi, field) => {
+    const id = `f_${si}_${fi}`;
+    if (field.type === "photo") return `<input id="${id}" type="file" accept="image/*,application/pdf">`;
+    if (field.type === "textarea") return `<textarea id="${id}"></textarea>`;
+    if (field.type === "number") return `<input id="${id}" type="number" step="any">`;
+    return `<input id="${id}" type="text">`;
+  };
+
+  el("view").innerHTML = `
+    <div class="breadcrumb"><a href="#diagnostics">Diagnostics</a> / ${esc(f.title)}</div>
+    <div class="page-head"><div><h1>${esc(f.title)}</h1>
+      ${f.summary ? `<div class="page-sub">${esc(f.summary)}</div>` : ""}</div></div>
+    <form id="run-form">
+      <div class="panel"><div class="field"><label>Link to job *</label>
+        <select id="run-job" required><option value="">— choose a job —</option>${jobOpts}</select></div></div>
+      ${steps.map((s, si) => `
+        <div class="panel">
+          <div style="display:flex;gap:12px;align-items:flex-start">
+            <div class="step-num">${si + 1}</div>
+            <div style="flex:1">
+              <div class="step-title">${esc(s.title)}</div>
+              ${s.detail ? `<div class="step-detail" style="margin-bottom:12px">${esc(s.detail)}</div>` : ""}
+              <div class="form-grid">
+                ${(s.fields || []).map((field, fi) => `
+                  <div class="field ${field.type === "textarea" || field.type === "photo" ? "full" : ""}">
+                    <label>${esc(field.label)}</label>${fieldInput(si, fi, field)}
+                  </div>`).join("")}
+                <div class="field full"><label>Notes</label><textarea id="note_${si}"></textarea></div>
+              </div>
+            </div>
+          </div>
+        </div>`).join("")}
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" onclick="location.hash='${presetJobId ? `jobs/${presetJobId}` : "diagnostics"}'">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="run-save">Save diagnostic</button>
+      </div>
+    </form>`;
+
+  $("#run-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const jobId = el("run-job").value;
+    if (!jobId) return toast("Please choose a job to link this to", "error");
+    const btn = el("run-save"); btn.disabled = true; btn.textContent = "Saving…";
+    const values = {};
+    for (let si = 0; si < steps.length; si++) {
+      const s = steps[si];
+      for (let fi = 0; fi < (s.fields || []).length; fi++) {
+        const field = s.fields[fi];
+        const inp = el(`f_${si}_${fi}`);
+        if (!inp) continue;
+        if (field.type === "photo") {
+          const file = inp.files && inp.files[0];
+          if (file) {
+            const safe = file.name.replace(/[^\w.\-]+/g, "_");
+            const path = `diag/${jobId}/${Date.now()}_${Math.random().toString(36).slice(2, 6)}_${safe}`;
+            const { error } = await db.storage.from(cfg.FILE_BUCKET).upload(path, file);
+            if (!error) values[`s${si}f${fi}`] = { photo: path, name: file.name };
+          }
+        } else if (inp.value.trim()) {
+          values[`s${si}f${fi}`] = inp.value.trim();
+        }
+      }
+      const note = el(`note_${si}`);
+      if (note && note.value.trim()) values[`s${si}note`] = note.value.trim();
+    }
+    const { error } = await db.from("diagnostic_runs").insert({
+      flow_id: flowId, job_id: jobId, title: f.title, data: { steps, values },
+    });
+    if (error) { btn.disabled = false; btn.textContent = "Save diagnostic"; return toast(error.message, "error"); }
+    toast("Diagnostic saved to job", "success");
+    location.hash = "jobs/" + jobId;
+  });
 }
 
+// Read-only view of a saved diagnostic report.
+async function flowRunView(runId) {
+  const { data: run } = await db.from("diagnostic_runs").select("*, jobs(id,job_number)").eq("id", runId).single();
+  if (!run) { el("view").innerHTML = `<div class="empty">Diagnostic not found.</div>`; return; }
+  const steps = (run.data && run.data.steps) || [];
+  const values = (run.data && run.data.values) || {};
+  const backJob = run.jobs ? `jobs/${run.jobs.id}` : "diagnostics";
+  el("view").innerHTML = `
+    <div class="breadcrumb"><a href="#${backJob}">${run.jobs ? fmtJobNo(run.jobs.job_number) : "Diagnostics"}</a> / ${esc(run.title || "Diagnostic")}</div>
+    <div class="page-head"><div><h1>${esc(run.title || "Diagnostic")}</h1>
+      <div class="page-sub">Recorded ${fmtDate(run.created_at)}</div></div>
+      <div class="row-actions"><button class="btn btn-danger" onclick="deleteRow('diagnostic_runs','${run.id}','${backJob}')">Delete</button></div></div>
+    ${steps.map((s, si) => {
+      const rows = (s.fields || []).map((field, fi) => {
+        const v = values[`s${si}f${fi}`];
+        if (v == null) return "";
+        if (field.type === "photo" && v.photo) return `<div class="field full"><label>${esc(field.label)}</label>
+          <img class="diag-photo" data-path="${esc(v.photo)}" alt="${esc(field.label)}" onclick="openFile('${esc(v.photo)}')" title="Click to open"></div>`;
+        return `<div class="field ${field.type === "textarea" ? "full" : ""}"><label>${esc(field.label)}</label><div class="ro-val">${esc(typeof v === "string" ? v : "")}</div></div>`;
+      }).join("");
+      const note = values[`s${si}note`];
+      return `<div class="panel"><div style="display:flex;gap:12px;align-items:flex-start">
+        <div class="step-num">${si + 1}</div>
+        <div style="flex:1"><div class="step-title">${esc(s.title)}</div>
+          <div class="form-grid" style="margin-top:8px">${rows}
+            ${note ? `<div class="field full"><label>Notes</label><div class="ro-val muted">${esc(note)}</div></div>` : ""}</div>
+        </div></div></div>`;
+    }).join("")}`;
+  document.querySelectorAll("img.diag-photo").forEach(async (img) => {
+    const { data } = await db.storage.from(cfg.FILE_BUCKET).createSignedUrl(img.dataset.path, 300);
+    if (data) img.src = data.signedUrl;
+  });
+}
+
+function fieldRowHtml(field = {}) {
+  const opts = FIELD_TYPES.map(([v, l]) => `<option value="${v}" ${v === field.type ? "selected" : ""}>${l}</option>`).join("");
+  return `<div class="se-field-row">
+    <input class="sef-label" placeholder="Input label (e.g. Part number)" value="${esc(field.label)}">
+    <select class="sef-type">${opts}</select>
+    <button type="button" class="li-del" onclick="this.closest('.se-field-row').remove()">&times;</button>
+  </div>`;
+}
 function stepRowHtml(s = {}) {
+  const fields = s.fields || [];
   return `<div class="step-edit-row">
     <div class="step-move">
       <button type="button" onclick="flowMoveStep(this,-1)" title="Move up">&#9650;</button>
@@ -1085,11 +1205,17 @@ function stepRowHtml(s = {}) {
     </div>
     <div class="step-edit-fields">
       <input class="se-title" placeholder="Step title (e.g. Visual inspection)" value="${esc(s.title)}">
-      <textarea class="se-detail" placeholder="Details — what to check, look for, or do">${esc(s.detail)}</textarea>
+      <textarea class="se-detail" placeholder="Instructions — what to check, look for, or do">${esc(s.detail)}</textarea>
+      <div class="se-fields">
+        <div class="muted" style="font-size:11px;margin:2px 0 6px">Inputs to capture on this step:</div>
+        <div class="se-field-list">${fields.map(fieldRowHtml).join("")}</div>
+        <button type="button" class="btn btn-sm" onclick="flowAddField(this)">+ Add input</button>
+      </div>
     </div>
     <button type="button" class="li-del" onclick="flowDelStep(this)">&times;</button>
   </div>`;
 }
+window.flowAddField = (btn) => { btn.previousElementSibling.insertAdjacentHTML("beforeend", fieldRowHtml()); };
 window.flowAddStep = () => { el("steps-body").insertAdjacentHTML("beforeend", stepRowHtml()); };
 window.flowDelStep = (b) => b.closest(".step-edit-row").remove();
 window.flowMoveStep = (btn, dir) => {
@@ -1103,8 +1229,8 @@ async function flowEditor(id) {
   if (id) f = (await db.from("diagnostic_flows").select("*").eq("id", id).single()).data;
   const steps = (f.steps && f.steps.length) ? f.steps : [{ title: "", detail: "" }];
   el("view").innerHTML = `
-    <div class="breadcrumb"><a href="#diagnostics">Diagnostic flows</a> / ${id ? "Edit" : "New"}</div>
-    <div class="page-head"><h1>${id ? "Edit flow" : "New flow"}</h1></div>
+    <div class="breadcrumb"><a href="#diagnostics">Diagnostics</a> / ${id ? "Edit template" : "New template"}</div>
+    <div class="page-head"><h1>${id ? "Edit template" : "New template"}</h1></div>
     <form id="flow-form">
       <div class="panel"><div class="form-grid">
         <div class="field"><label>Title *</label><input name="title" required value="${esc(f.title)}" placeholder="e.g. Module PCB repair"></div>
@@ -1113,38 +1239,41 @@ async function flowEditor(id) {
       </div></div>
       <div class="panel">
         <h3>Steps</h3>
+        <div class="muted" style="font-size:12px;margin-bottom:10px">Each step has instructions plus the inputs you want to capture (text, number, long text, or a photo).</div>
         <div id="steps-body">${steps.map(stepRowHtml).join("")}</div>
         <button type="button" class="btn btn-sm" onclick="flowAddStep()">+ Add step</button>
       </div>
       <div class="form-actions">
+        ${id ? `<button type="button" class="btn btn-danger" style="margin-right:auto" onclick="deleteRow('diagnostic_flows','${id}','diagnostics')">Delete template</button>` : ""}
         <button type="button" class="btn btn-ghost" onclick="location.hash='diagnostics'">Cancel</button>
-        <button type="submit" class="btn btn-primary">${id ? "Save flow" : "Create flow"}</button>
+        <button type="submit" class="btn btn-primary">${id ? "Save template" : "Create template"}</button>
       </div>
     </form>`;
   $("#flow-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f2 = e.target;
-    const stepsOut = [...document.querySelectorAll("#steps-body .step-edit-row")].map(r => ({
-      title: r.querySelector(".se-title").value.trim(),
-      detail: r.querySelector(".se-detail").value.trim(),
-    })).filter(s => s.title || s.detail);
+    const stepsOut = [...document.querySelectorAll("#steps-body .step-edit-row")].map(r => {
+      const fields = [...r.querySelectorAll(".se-field-row")].map(fr => ({
+        label: fr.querySelector(".sef-label").value.trim(),
+        type: fr.querySelector(".sef-type").value,
+      })).filter(x => x.label);
+      return { title: r.querySelector(".se-title").value.trim(), detail: r.querySelector(".se-detail").value.trim(), fields };
+    }).filter(s => s.title || s.detail || s.fields.length);
     const payload = {
       title: f2.title.value.trim(),
       category: f2.category.value.trim() || null,
       summary: f2.summary.value.trim() || null,
       steps: stepsOut,
     };
-    let fid = id;
     if (id) {
       const { error } = await db.from("diagnostic_flows").update(payload).eq("id", id);
       if (error) return toast(error.message, "error");
     } else {
-      const { data, error } = await db.from("diagnostic_flows").insert(payload).select("id").single();
+      const { error } = await db.from("diagnostic_flows").insert(payload);
       if (error) return toast(error.message, "error");
-      fid = data.id;
     }
-    toast("Flow saved", "success");
-    location.hash = "diagnostics/" + fid;
+    toast("Template saved", "success");
+    location.hash = "diagnostics";
   });
 }
 
