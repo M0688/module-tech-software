@@ -516,7 +516,7 @@ async function jobDetail(id) {
       <div class="page-sub">${esc(JOB_TYPES[j.job_type] || j.job_type || "")} · ${fmtMoney(j.price)}</div></div>
       <div class="row-actions">
         <button class="btn" onclick="jobForm('${j.id}')">Edit job</button>
-        <button class="btn btn-danger" onclick="deleteRow('jobs','${j.id}','jobs')">Delete</button>
+        <button class="btn btn-danger" onclick="deleteJob('${j.id}')">Delete</button>
       </div></div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
@@ -565,6 +565,25 @@ async function jobDetail(id) {
         </div></div>`).join("") : `<div class="empty">No files linked to this job yet.</div>`}
     </div>`;
 }
+
+// Delete a job and everything attached to it (invoices + items, and the job's files incl. storage).
+// The customer and vehicle are left intact.
+window.deleteJob = async (jobId) => {
+  if (!confirm("Delete this job and everything attached to it (invoices and files)?\nThe customer and vehicle will be kept. This cannot be undone.")) return;
+  // 1. files: remove from storage, then rows
+  const { data: files } = await db.from("vehicle_files").select("storage_path").eq("job_id", jobId);
+  if (files && files.length) {
+    await db.storage.from(cfg.FILE_BUCKET).remove(files.map(f => f.storage_path));
+    await db.from("vehicle_files").delete().eq("job_id", jobId);
+  }
+  // 2. invoices (invoice_items cascade on invoice delete)
+  await db.from("invoices").delete().eq("job_id", jobId);
+  // 3. the job itself
+  const { error } = await db.from("jobs").delete().eq("id", jobId);
+  if (error) return toast(error.message, "error");
+  toast("Job and attached records deleted", "success");
+  location.hash = "jobs"; route();
+};
 
 window.jobForm = async (id) => {
   let j = {};
