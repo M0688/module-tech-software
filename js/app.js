@@ -194,6 +194,7 @@ window.customerForm = async (id) => {
         <div class="field full"><label>Notes</label><textarea name="notes">${esc(c.notes)}</textarea></div>
       </div>
       <div class="form-actions">
+        ${id ? `<button type="button" class="btn btn-danger" style="margin-right:auto" onclick="deleteRow('customers','${id}', location.hash.slice(1) || 'jobs')">Delete</button>` : ""}
         <button type="button" class="btn btn-ghost" onclick="closeModalGlobal()">Cancel</button>
         <button type="submit" class="btn btn-primary">${id ? "Save" : "Create"}</button>
       </div>
@@ -304,6 +305,7 @@ window.vehicleForm = async (id, presetCustomer) => {
         <div class="field full"><label>Notes</label><textarea name="notes">${esc(v.notes)}</textarea></div>
       </div>
       <div class="form-actions">
+        ${id ? `<button type="button" class="btn btn-danger" style="margin-right:auto" onclick="deleteRow('vehicles','${id}', location.hash.slice(1) || 'jobs')">Delete</button>` : ""}
         <button type="button" class="btn btn-ghost" onclick="closeModalGlobal()">Cancel</button>
         <button type="submit" class="btn btn-primary">${id ? "Save" : "Create"}</button>
       </div>
@@ -323,7 +325,6 @@ async function vehicleDetail(id) {
   const { data: v } = await db.from("vehicles").select("*, customers(id,name)").eq("id", id).single();
   if (!v) { el("view").innerHTML = `<div class="empty">Vehicle not found.</div>`; return; }
   const { data: files } = await db.from("vehicle_files").select("*").eq("vehicle_id", id).order("created_at", { ascending: false });
-  const { data: faults } = await db.from("faults").select("*").eq("vehicle_id", id).order("created_at", { ascending: false });
 
   el("view").innerHTML = `
     <div class="breadcrumb"><a href="#vehicles">Vehicles</a> / ${esc(v.registration || v.make || "Vehicle")}</div>
@@ -355,41 +356,28 @@ async function vehicleDetail(id) {
           <span class="sub">${esc((f.kind || "").replace("_", " "))} · ${esc(f.original_name)} · ${fmtBytes(f.size_bytes)} · ${fmtDate(f.created_at)}</span>
         </div>
         <div class="file-actions">
+          <button class="btn btn-sm" onclick="fileEditForm('${f.id}')">Label</button>
           <button class="btn btn-sm" onclick="downloadFile('${esc(f.storage_path)}','${esc(f.original_name)}')">Download</button>
-          <button class="btn btn-sm btn-danger" onclick="deleteFile('${f.id}','${esc(f.storage_path)}','${v.id}')">Delete</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteFile('${f.id}','${esc(f.storage_path)}')">Delete</button>
         </div></div>`).join("") : `<div class="empty">No files uploaded for this vehicle yet.</div>`}
-    </div>
-
-    <div class="page-head"><h1 style="font-size:18px">Fault log</h1>
-      <button class="btn btn-primary btn-sm" onclick="faultForm(null,'${v.id}')">+ Log fault</button></div>
-    <div class="table-wrap">${faults.length ? `<table>
-      <thead><tr><th>Module</th><th>Code</th><th>Description</th><th>Resolution</th><th>Date</th></tr></thead>
-      <tbody>${faults.map(f => `<tr onclick="faultForm('${f.id}','${v.id}')">
-        <td>${esc(f.module) || "—"}</td><td><span class="chip">${esc(f.fault_code) || "—"}</span></td>
-        <td>${esc(f.description) || "—"}</td><td class="muted">${esc(f.resolution) || "—"}</td>
-        <td class="muted">${fmtDate(f.created_at)}</td></tr>`).join("")}</tbody>
-    </table>` : `<div class="empty">No faults logged for this vehicle.</div>`}</div>`;
+    </div>`;
 }
 
 /* ---------- File upload / download ---------- */
+const FILE_KINDS = [["original_read", "Original read"], ["modified_write", "Modified / write"], ["backup", "Backup"], ["eeprom", "EEPROM"], ["flash", "Flash"], ["diag_scan", "Diag scan"], ["other", "Other"]];
+
 window.fileUploadForm = async (vehicleId, jobId) => {
   const { data: jobs } = await db.from("jobs").select("id,job_number,job_type").eq("vehicle_id", vehicleId).order("created_at", { ascending: false });
   const jobOpts = (jobs || []).map(j => `<option value="${j.id}" ${j.id === jobId ? "selected" : ""}>${esc(fmtJobNo(j.job_number))}${j.job_type ? " — " + esc(JOB_TYPES[j.job_type] || j.job_type) : ""}</option>`).join("");
-  openModal("Upload file", `
+  const kindOpts = FILE_KINDS.map(([k, l]) => `<option value="${k}">${l}</option>`).join("");
+  openModal("Upload files", `
     <form id="file-form">
       <div class="form-grid">
-        <div class="field full"><label>File *</label><input type="file" name="file" required></div>
-        <div class="field"><label>Type</label><select name="kind">
-          <option value="original_read">Original read</option>
-          <option value="modified_write">Modified / write</option>
-          <option value="backup">Backup</option>
-          <option value="eeprom">EEPROM</option>
-          <option value="flash">Flash</option>
-          <option value="other">Other</option>
-        </select></div>
-        <div class="field"><label>Label</label><input name="label" placeholder="e.g. Stage 1 map"></div>
+        <div class="field full"><label>Files * <span class="muted" style="font-weight:400">— pick one or many</span></label><input type="file" name="file" multiple required></div>
+        <div class="field"><label>Type (applied to all)</label><select name="kind">${kindOpts}</select></div>
         <div class="field full"><label>Link to job (optional)</label><select name="job_id"><option value="">— none —</option>${jobOpts}</select></div>
-        <div class="field full"><label>Notes</label><textarea name="notes"></textarea></div>
+        <div class="field full"><label>Notes (optional, applied to all)</label><textarea name="notes"></textarea></div>
+        <div class="field full muted" style="font-size:12px">After uploading, click <strong>Label</strong> on any file to name it.</div>
       </div>
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" onclick="closeModalGlobal()">Cancel</button>
@@ -399,19 +387,54 @@ window.fileUploadForm = async (vehicleId, jobId) => {
   $("#file-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const form = e.target;
-    const file = form.file.files[0];
-    if (!file) return;
-    el("upbtn").textContent = "Uploading…";
-    const path = `${vehicleId}/${Date.now()}_${file.name}`;
-    const { error: upErr } = await db.storage.from(cfg.FILE_BUCKET).upload(path, file);
-    if (upErr) { el("upbtn").textContent = "Upload"; return toast(upErr.message, "error"); }
-    const { error } = await db.from("vehicle_files").insert({
-      vehicle_id: vehicleId, job_id: form.job_id.value || null, kind: form.kind.value,
-      label: form.label.value.trim() || null, notes: form.notes.value.trim() || null,
-      storage_path: path, original_name: file.name, size_bytes: file.size,
-    });
+    const files = [...form.file.files];
+    if (!files.length) return;
+    const kind = form.kind.value, jobV = form.job_id.value || null, notes = form.notes.value.trim() || null;
+    let done = 0, failed = 0;
+    el("upbtn").disabled = true;
+    for (const file of files) {
+      el("upbtn").textContent = `Uploading ${done + failed + 1}/${files.length}…`;
+      const safe = file.name.replace(/[^\w.\-]+/g, "_");
+      const path = `${vehicleId}/${Date.now()}_${Math.random().toString(36).slice(2, 7)}_${safe}`;
+      const { error: upErr } = await db.storage.from(cfg.FILE_BUCKET).upload(path, file);
+      if (upErr) { failed++; continue; }
+      const { error } = await db.from("vehicle_files").insert({
+        vehicle_id: vehicleId, job_id: jobV, kind, label: null, notes,
+        storage_path: path, original_name: file.name, size_bytes: file.size,
+      });
+      if (error) failed++; else done++;
+    }
+    closeModal();
+    toast(`Uploaded ${done} file${done === 1 ? "" : "s"}${failed ? `, ${failed} failed` : ""}`, failed ? "error" : "success");
+    route();
+  });
+};
+
+// Rename / relabel a single already-uploaded file.
+window.fileEditForm = async (id) => {
+  const { data: f } = await db.from("vehicle_files").select("*").eq("id", id).single();
+  if (!f) return;
+  const kindOpts = FILE_KINDS.map(([k, l]) => `<option value="${k}" ${k === f.kind ? "selected" : ""}>${l}</option>`).join("");
+  openModal("Label file", `
+    <form id="filelabel-form">
+      <div class="muted" style="font-size:13px;margin-bottom:12px">${esc(f.original_name)} · ${fmtBytes(f.size_bytes)}</div>
+      <div class="form-grid">
+        <div class="field full"><label>Label</label><input name="label" value="${esc(f.label)}" placeholder="e.g. Stage 1 map"></div>
+        <div class="field full"><label>Type</label><select name="kind">${kindOpts}</select></div>
+        <div class="field full"><label>Notes</label><textarea name="notes">${esc(f.notes)}</textarea></div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-danger" style="margin-right:auto" onclick="deleteFile('${f.id}','${esc(f.storage_path)}')">Delete</button>
+        <button type="button" class="btn btn-ghost" onclick="closeModalGlobal()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>`);
+  $("#filelabel-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const p = readForm(e.target);
+    const { error } = await db.from("vehicle_files").update({ label: p.label, kind: p.kind, notes: p.notes }).eq("id", id);
     if (error) return toast(error.message, "error");
-    closeModal(); toast("File uploaded", "success"); route();
+    closeModal(); toast("File updated", "success"); route();
   });
 };
 
@@ -422,12 +445,12 @@ window.downloadFile = async (path, name) => {
   a.href = data.signedUrl; a.download = name || ""; document.body.appendChild(a); a.click(); a.remove();
 };
 
-window.deleteFile = async (id, path, vehicleId) => {
+window.deleteFile = async (id, path) => {
   if (!confirm("Delete this file? This cannot be undone.")) return;
   await db.storage.from(cfg.FILE_BUCKET).remove([path]);
   const { error } = await db.from("vehicle_files").delete().eq("id", id);
   if (error) return toast(error.message, "error");
-  toast("File deleted", "success"); route();
+  closeModal(); toast("File deleted", "success"); route();
 };
 
 /* ===========================================================
@@ -443,7 +466,7 @@ views.jobs = async (rest) => {
     .order("created_at", { ascending: false });
   el("view").innerHTML = `
     <div class="page-head"><div><h1>Jobs</h1>
-      <div class="page-sub">Everything for a job in one place — customer, vehicle, files, faults & invoice</div></div>
+      <div class="page-sub">Everything for a job in one place — customer, vehicle, files & invoice</div></div>
       <button class="btn btn-primary" onclick="jobCreateForm()">+ New job</button></div>
     <div class="panel" style="padding:12px"><input id="job-search" autofocus
       placeholder="🔍  Search anything — name, phone, reg, make, model, VIN, job title…"
@@ -482,9 +505,8 @@ async function jobDetail(id) {
   const { data: j } = await db.from("jobs").select("*, vehicles(*), customers(*)").eq("id", id).single();
   if (!j) { el("view").innerHTML = `<div class="empty">Job not found.</div>`; return; }
   const v = j.vehicles, c = j.customers;
-  const [{ data: files }, { data: faults }, { data: invoices }] = await Promise.all([
+  const [{ data: files }, { data: invoices }] = await Promise.all([
     db.from("vehicle_files").select("*").eq("job_id", id).order("created_at", { ascending: false }),
-    db.from("faults").select("*").eq("job_id", id).order("created_at", { ascending: false }),
     db.from("invoices").select("*").eq("job_id", id).order("created_at", { ascending: false }),
   ]);
   el("view").innerHTML = `
@@ -537,20 +559,11 @@ async function jobDetail(id) {
         <div class="file-meta"><span class="name">${esc(f.label || f.original_name)}</span>
           <span class="sub">${esc((f.kind || "").replace("_", " "))} · ${esc(f.original_name)} · ${fmtBytes(f.size_bytes)} · ${fmtDate(f.created_at)}</span></div>
         <div class="file-actions">
+          <button class="btn btn-sm" onclick="fileEditForm('${f.id}')">Label</button>
           <button class="btn btn-sm" onclick="downloadFile('${esc(f.storage_path)}','${esc(f.original_name)}')">Download</button>
-          <button class="btn btn-sm btn-danger" onclick="deleteFile('${f.id}','${esc(f.storage_path)}','${v.id}')">Delete</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteFile('${f.id}','${esc(f.storage_path)}')">Delete</button>
         </div></div>`).join("") : `<div class="empty">No files linked to this job yet.</div>`}
-    </div>
-
-    <div class="page-head"><h1 style="font-size:18px">Faults</h1>
-      <button class="btn btn-primary btn-sm" onclick="faultForm(null,${v ? `'${v.id}'` : "null"},'${j.id}')">+ Log fault</button></div>
-    <div class="table-wrap">${faults.length ? `<table>
-      <thead><tr><th>Module</th><th>Code</th><th>Description</th><th>Resolution</th><th>Date</th></tr></thead>
-      <tbody>${faults.map(f => `<tr onclick="faultForm('${f.id}',${v ? `'${v.id}'` : "null"},'${j.id}')">
-        <td>${esc(f.module) || "—"}</td><td><span class="chip">${esc(f.fault_code) || "—"}</span></td>
-        <td>${esc(f.description) || "—"}</td><td class="muted">${esc(f.resolution) || "—"}</td>
-        <td class="muted">${fmtDate(f.created_at)}</td></tr>`).join("")}</tbody>
-    </table>` : `<div class="empty">No faults linked to this job yet.</div>`}</div>`;
+    </div>`;
 }
 
 window.jobForm = async (id) => {
@@ -705,78 +718,7 @@ window.jobCreateForm = async () => {
 };
 
 /* ===========================================================
-   FAULTS
-   =========================================================== */
-views.faults = async () => {
-  const { data } = await db.from("faults")
-    .select("*, vehicles(registration, make, model)").order("created_at", { ascending: false });
-  el("view").innerHTML = `
-    <div class="page-head"><div><h1>Fault log</h1>
-      <div class="page-sub">Searchable history of faults & fixes — ${data.length} entries</div></div>
-      <button class="btn btn-primary" onclick="faultForm()">+ Log fault</button></div>
-    <div class="panel" style="padding:12px"><input id="fault-search" placeholder="Search module, code, description…"
-      style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:9px 11px;border-radius:8px"></div>
-    <div class="table-wrap" id="fault-table">${faultRows(data)}</div>`;
-  const all = data;
-  $("#fault-search").addEventListener("input", (e) => {
-    const q = e.target.value.toLowerCase();
-    const filtered = all.filter(f => JSON.stringify(f).toLowerCase().includes(q));
-    $("#fault-table").innerHTML = faultRows(filtered);
-  });
-};
-
-function faultRows(data) {
-  if (!data.length) return `<div class="empty">No faults logged yet.</div>`;
-  return `<table>
-    <thead><tr><th>Module</th><th>Code</th><th>Vehicle</th><th>Description</th><th>Resolution</th><th>Date</th></tr></thead>
-    <tbody>${data.map(f => `<tr onclick="faultForm('${f.id}', ${f.vehicle_id ? `'${f.vehicle_id}'` : "null"})">
-      <td>${esc(f.module) || "—"}</td><td><span class="chip">${esc(f.fault_code) || "—"}</span></td>
-      <td>${f.vehicles ? esc(`${f.vehicles.registration || ""} ${f.vehicles.make || ""}`) : "—"}</td>
-      <td>${esc(f.description) || "—"}</td><td class="muted">${esc(f.resolution) || "—"}</td>
-      <td class="muted">${fmtDate(f.created_at)}</td></tr>`).join("")}</tbody></table>`;
-}
-
-window.faultForm = async (id, vehicleId, jobId) => {
-  let f = { vehicle_id: vehicleId, job_id: jobId };
-  if (id) f = (await db.from("faults").select("*").eq("id", id).single()).data;
-  const [{ data: vehicles }, { data: jobs }] = await Promise.all([
-    db.from("vehicles").select("id,registration,make,model").order("created_at", { ascending: false }),
-    db.from("jobs").select("id,job_number,job_type").order("created_at", { ascending: false }),
-  ]);
-  const vOpts = vehicles.map(v =>
-    `<option value="${v.id}" ${v.id === f.vehicle_id ? "selected" : ""}>${esc(`${v.registration || ""} ${v.make || ""} ${v.model || ""}`)}</option>`).join("");
-  const jOpts = jobs.map(j =>
-    `<option value="${j.id}" ${j.id === f.job_id ? "selected" : ""}>${esc(fmtJobNo(j.job_number))}${j.job_type ? " — " + esc(JOB_TYPES[j.job_type] || j.job_type) : ""}</option>`).join("");
-  openModal(id ? "Edit fault" : "Log fault", `
-    <form id="fault-form-modal">
-      <div class="form-grid">
-        <div class="field"><label>Vehicle</label><select name="vehicle_id"><option value="">—</option>${vOpts}</select></div>
-        <div class="field"><label>Job (optional)</label><select name="job_id"><option value="">—</option>${jOpts}</select></div>
-        <div class="field"><label>Module</label><input name="module" value="${esc(f.module)}" placeholder="e.g. ABS, ECU, BSI"></div>
-        <div class="field"><label>Fault code</label><input name="fault_code" value="${esc(f.fault_code)}" placeholder="e.g. P0420"></div>
-        <div class="field full"><label>Description</label><textarea name="description">${esc(f.description)}</textarea></div>
-        <div class="field full"><label>Cause</label><textarea name="cause">${esc(f.cause)}</textarea></div>
-        <div class="field full"><label>Resolution / fix</label><textarea name="resolution">${esc(f.resolution)}</textarea></div>
-      </div>
-      <div class="form-actions">
-        ${id ? `<button type="button" class="btn btn-danger" style="margin-right:auto" onclick="deleteRow('faults','${id}','faults')">Delete</button>` : ""}
-        <button type="button" class="btn btn-ghost" onclick="closeModalGlobal()">Cancel</button>
-        <button type="submit" class="btn btn-primary">${id ? "Save" : "Log fault"}</button>
-      </div>
-    </form>`);
-  $("#fault-form-modal").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const payload = readForm(e.target);
-    const q = id ? db.from("faults").update(payload).eq("id", id)
-                 : db.from("faults").insert(payload);
-    const { error } = await q;
-    if (error) return toast(error.message, "error");
-    closeModal(); toast(id ? "Fault saved" : "Fault logged", "success"); route();
-  });
-};
-
-/* ===========================================================
-   PLACEHOLDERS (next iterations)
+   INVOICES
    =========================================================== */
 const INV_STATUS = ["draft", "sent", "paid", "overdue"];
 

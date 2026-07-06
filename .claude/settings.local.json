@@ -24,7 +24,8 @@
       "Bash(echo \"exit=$?\")",
       "Bash(git commit -q -m 'Make Jobs the single hub: inline customer/vehicle, invoicing per job, global search *)",
       "mcp__3e39bf3e-60c9-4d6b-9128-1d8bf524eac3__deploy_edge_function",
-      "Bash(git commit -q -m 'Reg lookup: auto-fill on tab-out \\(blur\\), remove manual button *)"
+      "Bash(git commit -q -m 'Reg lookup: auto-fill on tab-out \\(blur\\), remove manual button *)",
+      "Bash(git commit -q -m 'Multi-file upload + per-file labelling; delete customers/vehicles; remove fault logging *)"
     ]
   }
 }
