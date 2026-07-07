@@ -501,6 +501,97 @@ function jobRows(data) {
       <td>${fmtMoney(j.price)}</td></tr>`).join("")}</tbody></table>`;
 }
 
+/* ===========================================================
+   FOLDER SCAN — pull files from a local reg folder into a job.
+   Uses the browser File System Access API (Chrome/Edge on desktop);
+   no installed program, on-demand per job.
+   =========================================================== */
+const SCAN_KIND = {
+  ORI: "original_read", ORIREAD: "original_read", ORIGINAL: "original_read", READ: "original_read",
+  MOD: "modified_write", MODIFIED: "modified_write", WRITE: "modified_write", STAGE: "modified_write",
+  BACKUP: "backup", BAK: "backup", EEPROM: "eeprom", EE: "eeprom", FLASH: "flash", DIAG: "diag_scan", SCAN: "diag_scan",
+};
+const normReg = (s) => (s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+const scanKind = (name) => SCAN_KIND[(name || "").toUpperCase().replace(/[^A-Z]/g, "")] || "other";
+
+function idb(mode, fn) {
+  return new Promise((res, rej) => {
+    const o = indexedDB.open("mts", 1);
+    o.onupgradeneeded = () => o.result.createObjectStore("kv");
+    o.onsuccess = () => {
+      const tx = o.result.transaction("kv", mode);
+      const req = fn(tx.objectStore("kv"));
+      tx.oncomplete = () => res(req ? req.result : undefined);
+      tx.onerror = () => rej(tx.error);
+    };
+    o.onerror = () => rej(o.error);
+  });
+}
+const idbGet = (k) => idb("readonly", (st) => st.get(k));
+const idbSet = (k, v) => idb("readwrite", (st) => st.put(v, k));
+
+async function scanPermission(handle) {
+  const opts = { mode: "read" };
+  if ((await handle.queryPermission(opts)) === "granted") return true;
+  return (await handle.requestPermission(opts)) === "granted";
+}
+async function findRegDir(root, reg) {
+  const target = normReg(reg);
+  for await (const [name, h] of root.entries())
+    if (h.kind === "directory" && normReg(name) === target) return h;
+  for await (const [name, h] of root.entries())          // one level down (year folders)
+    if (h.kind === "directory" && /^(19|20)\d{2}$/.test(name))
+      for await (const [n2, h2] of h.entries())
+        if (h2.kind === "directory" && normReg(n2) === target) return h2;
+  return null;
+}
+async function collectFiles(dir, dirName, out) {
+  for await (const [name, h] of dir.entries()) {
+    if (h.kind === "file") out.push({ handle: h, kind: scanKind(dirName) });
+    else if (h.kind === "directory") await collectFiles(h, name, out);
+  }
+}
+window.changeScanFolder = async () => {
+  if (!window.showDirectoryPicker) return toast("Folder scan needs Chrome or Edge on a computer", "error");
+  try { const root = await window.showDirectoryPicker({ id: "mtsRoot", mode: "read" }); await idbSet("rootDir", root); toast("Scan folder saved", "success"); }
+  catch (_) { /* cancelled */ }
+};
+window.scanJobFolder = async (jobId, vehicleId, reg) => {
+  if (!window.showDirectoryPicker) return toast("Folder scan needs Chrome or Edge on a computer", "error");
+  if (!reg) return toast("This job has no registration to match a folder", "error");
+  let root = await idbGet("rootDir").catch(() => null);
+  if (!root) {
+    try { root = await window.showDirectoryPicker({ id: "mtsRoot", mode: "read" }); await idbSet("rootDir", root); }
+    catch (_) { return; }
+  }
+  if (!(await scanPermission(root))) return toast("Folder access not granted", "error");
+  let regDir;
+  try { regDir = await findRegDir(root, reg); }
+  catch (_) { return toast("Couldn't read that folder — re-pick it with 'Change scan folder' in Settings", "error"); }
+  if (!regDir) return toast(`No folder named "${reg}" found in your scan folder`, "error");
+  toast("Scanning " + reg + "…");
+  const items = [];
+  await collectFiles(regDir, regDir.name, items);
+  const { data: existing } = await db.from("vehicle_files").select("original_name,size_bytes").eq("job_id", jobId);
+  const seen = new Set((existing || []).map((f) => f.original_name + "|" + f.size_bytes));
+  let up = 0, skip = 0, fail = 0;
+  for (const it of items) {
+    const file = await it.handle.getFile();
+    if (file.size === 0 || seen.has(file.name + "|" + file.size)) { skip++; continue; }
+    const safe = file.name.replace(/[^\w.\-]+/g, "_");
+    const path = `${vehicleId}/${Date.now()}_${Math.random().toString(36).slice(2, 6)}_${safe}`;
+    const { error: ue } = await db.storage.from(cfg.FILE_BUCKET).upload(path, file);
+    if (ue) { fail++; continue; }
+    const { error } = await db.from("vehicle_files").insert({
+      vehicle_id: vehicleId, job_id: jobId, kind: it.kind, label: null,
+      notes: "Scanned from folder", storage_path: path, original_name: file.name, size_bytes: file.size,
+    });
+    if (error) fail++; else { up++; seen.add(file.name + "|" + file.size); }
+  }
+  toast(`${reg}: ${up} file${up === 1 ? "" : "s"} added${skip ? `, ${skip} already there` : ""}${fail ? `, ${fail} failed` : ""}`, fail ? "error" : "success");
+  route();
+};
+
 async function jobDetail(id) {
   const { data: j } = await db.from("jobs").select("*, vehicles(*), customers(*)").eq("id", id).single();
   if (!j) { el("view").innerHTML = `<div class="empty">Job not found.</div>`; return; }
@@ -553,7 +644,10 @@ async function jobDetail(id) {
     </table>` : `<div class="empty">No invoice yet. Click "Create invoice" to bill this job.</div>`}</div>
 
     <div class="page-head"><h1 style="font-size:18px">Files</h1>
-      ${v ? `<button class="btn btn-primary btn-sm" onclick="fileUploadForm('${v.id}','${j.id}')">+ Upload file</button>` : ""}</div>
+      <div class="row-actions">
+        ${v && v.registration ? `<button class="btn btn-sm" onclick="scanJobFolder('${j.id}','${v.id}','${esc(v.registration)}')">🔍 Scan folder</button>` : ""}
+        ${v ? `<button class="btn btn-primary btn-sm" onclick="fileUploadForm('${v.id}','${j.id}')">+ Upload file</button>` : ""}
+      </div></div>
     <div class="table-wrap" style="margin-bottom:24px">
       ${!v ? `<div class="empty">Link a vehicle to this job (Edit) to attach files.</div>`
         : files.length ? files.map(f => `<div class="file-row">
@@ -1015,7 +1109,12 @@ views.settings = async () => {
       <div class="field full"><label>Invoice terms / footer</label><textarea name="invoice_terms">${esc(s.invoice_terms)}</textarea></div>
     </div>
     <div class="form-actions"><button type="submit" class="btn btn-primary">Save settings</button></div>
-    </div></form>`;
+    </div></form>
+    <div class="panel">
+      <h3>Folder scanning</h3>
+      <div class="muted" style="font-size:13px;margin-bottom:12px">Choose your files folder (the one that holds your year/reg folders). The <strong>Scan folder</strong> button on each job then pulls in that reg's files. Chrome or Edge on a computer only.</div>
+      <button type="button" class="btn" onclick="changeScanFolder()">Choose scan folder…</button>
+    </div>`;
   $("#settings-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const payload = readForm(e.target);
