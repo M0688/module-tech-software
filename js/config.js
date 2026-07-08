@@ -5,4 +5,6 @@ window.MTS_CONFIG = {
   SUPABASE_URL: "https://qoobyuxfwpazcudiqjrx.supabase.co",
   SUPABASE_KEY: "sb_publishable_PlsTr5xktXstS_TiBHc_wQ_-sV3Sc3W",
   FILE_BUCKET: "vehicle-files",
+  GOOGLE_CLIENT_ID: "802149056417-ltf0rha7vfhgh7pagki195nck55vg2e5.apps.googleusercontent.com",
+  DRIVE_ROOT_FOLDER: "remapping",
 };

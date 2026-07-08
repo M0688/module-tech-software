@@ -141,7 +141,8 @@ views.dashboard = async () => {
 
   el("view").innerHTML = `
     <div class="page-head"><div><h1>Dashboard</h1>
-      <div class="page-sub">Welcome back — here's the shop at a glance.</div></div></div>
+      <div class="page-sub">Welcome back — here's the shop at a glance.</div></div>
+      <button class="btn btn-primary" id="drive-sync-btn" onclick="syncDrive()">☁ Sync from Google Drive</button></div>
     <div class="stats">
       <div class="stat-card"><div class="num">${cust.count ?? 0}</div><div class="label">Customers</div></div>
       <div class="stat-card"><div class="num">${veh.count ?? 0}</div><div class="label">Vehicles</div></div>
@@ -590,6 +591,105 @@ window.scanJobFolder = async (jobId, vehicleId, reg) => {
   }
   toast(`${reg}: ${up} file${up === 1 ? "" : "s"} added${skip ? `, ${skip} already there` : ""}${fail ? `, ${fail} failed` : ""}`, fail ? "error" : "success");
   route();
+};
+
+/* ===========================================================
+   GOOGLE DRIVE SYNC — pull files from Drive "remapping/<reg>/" into jobs.
+   Cloud-to-cloud, triggered by the Dashboard button; works on any device.
+   =========================================================== */
+let _tokenClient, _driveToken, _driveTokenExp = 0;
+
+function getDriveToken() {
+  return new Promise((resolve, reject) => {
+    if (_driveToken && Date.now() < _driveTokenExp) return resolve(_driveToken);
+    if (typeof google === "undefined" || !google.accounts || !google.accounts.oauth2)
+      return reject(new Error("Google library still loading — try again in a moment"));
+    if (!_tokenClient) {
+      _tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: cfg.GOOGLE_CLIENT_ID,
+        scope: "https://www.googleapis.com/auth/drive.readonly",
+        callback: () => {},
+      });
+    }
+    _tokenClient.callback = (resp) => {
+      if (resp && resp.error) return reject(new Error(resp.error));
+      _driveToken = resp.access_token;
+      _driveTokenExp = Date.now() + ((resp.expires_in || 3600) - 60) * 1000;
+      resolve(_driveToken);
+    };
+    _tokenClient.requestAccessToken({ prompt: "" });
+  });
+}
+
+async function driveList(q, token, fields = "files(id,name)") {
+  const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true`;
+  const r = await fetch(url, { headers: { Authorization: "Bearer " + token } });
+  if (!r.ok) throw new Error("Drive API error " + r.status);
+  return (await r.json()).files || [];
+}
+
+async function vehicleForReg(reg) {
+  const { data: vs } = await db.from("vehicles").select("id,registration,customer_id");
+  const t = normReg(reg);
+  const found = (vs || []).find((v) => normReg(v.registration) === t);
+  if (found) return found;
+  const { data } = await db.from("vehicles").insert({ registration: reg.trim() }).select("id,customer_id").single();
+  return data;
+}
+async function jobForVehicle(vehicleId, customerId) {
+  const { data: jobs } = await db.from("jobs").select("id").eq("vehicle_id", vehicleId).order("created_at", { ascending: false }).limit(1);
+  if (jobs && jobs.length) return jobs[0].id;
+  const payload = { vehicle_id: vehicleId, status: "booked" };
+  if (customerId) payload.customer_id = customerId;
+  const { data } = await db.from("jobs").insert(payload).select("id").single();
+  return data.id;
+}
+
+window.syncDrive = async () => {
+  const btn = el("drive-sync-btn");
+  const reset = (msg, type) => { if (btn) { btn.disabled = false; btn.textContent = "☁ Sync from Google Drive"; } toast(msg, type); };
+  if (btn) { btn.disabled = true; btn.textContent = "Connecting…"; }
+  let token;
+  try { token = await getDriveToken(); }
+  catch (e) { return reset("Google sign-in failed: " + e.message, "error"); }
+  try {
+    if (btn) btn.textContent = "Finding folder…";
+    const roots = await driveList(`name='${cfg.DRIVE_ROOT_FOLDER}' and mimeType='application/vnd.google-apps.folder' and trashed=false`, token);
+    if (!roots.length) return reset(`No "${cfg.DRIVE_ROOT_FOLDER}" folder found in your Google Drive`, "error");
+    const regFolders = await driveList(`'${roots[0].id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`, token);
+    let up = 0, skip = 0, fail = 0;
+    for (const rf of regFolders) {
+      const files = await driveList(`'${rf.id}' in parents and mimeType!='application/vnd.google-apps.folder' and trashed=false`, token, "files(id,name,size)");
+      if (!files.length) continue;
+      if (btn) btn.textContent = "Syncing " + rf.name + "…";
+      const veh = await vehicleForReg(rf.name);
+      const jobId = await jobForVehicle(veh.id, veh.customer_id);
+      const { data: existing } = await db.from("vehicle_files").select("original_name,size_bytes").eq("vehicle_id", veh.id);
+      const seen = new Set((existing || []).map((f) => f.original_name + "|" + f.size_bytes));
+      for (const f of files) {
+        const dsize = Number(f.size || 0);
+        if (dsize === 0 || seen.has(f.name + "|" + dsize)) { skip++; continue; }
+        let blob;
+        try {
+          const r = await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&supportsAllDrives=true`, { headers: { Authorization: "Bearer " + token } });
+          if (!r.ok) throw 0;
+          blob = await r.blob();
+        } catch (_) { fail++; continue; }
+        const path = `${veh.id}/${Date.now()}_${Math.random().toString(36).slice(2, 6)}_${f.name.replace(/[^\w.\-]+/g, "_")}`;
+        const { error: ue } = await db.storage.from(cfg.FILE_BUCKET).upload(path, blob);
+        if (ue) { fail++; continue; }
+        const { error } = await db.from("vehicle_files").insert({
+          vehicle_id: veh.id, job_id: jobId, kind: "other", label: null,
+          notes: "Synced from Google Drive", storage_path: path, original_name: f.name, size_bytes: blob.size,
+        });
+        if (error) fail++; else { up++; seen.add(f.name + "|" + dsize); }
+      }
+    }
+    reset(`Drive sync: ${up} file${up === 1 ? "" : "s"} added${skip ? `, ${skip} already there` : ""}${fail ? `, ${fail} failed` : ""}`, fail ? "error" : "success");
+    route();
+  } catch (e) {
+    reset("Sync error: " + e.message, "error");
+  }
 };
 
 async function jobDetail(id) {
