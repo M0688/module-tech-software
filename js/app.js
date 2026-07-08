@@ -719,7 +719,7 @@ async function jobDetail(id) {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
       <div class="panel">
         <div class="page-head" style="margin-bottom:10px"><h3 style="margin:0">Customer</h3>
-          <button class="btn btn-sm" onclick="${c ? `customerForm('${c.id}')` : `jobForm('${j.id}')`}">${c ? "Edit" : "Add"}</button></div>
+          <button class="btn btn-sm" onclick="${c ? `customerForm('${c.id}')` : `linkCustomerToJob('${j.id}', ${v ? `'${v.id}'` : "null"})`}">${c ? "Edit" : "Add"}</button></div>
         ${c ? `<div><strong>${esc(c.name)}</strong></div>
           ${c.company ? `<div class="muted">${esc(c.company)}</div>` : ""}
           <div style="margin-top:6px">${c.phone ? `Tel: ${esc(c.phone)}` : ""}${c.phone && c.email ? " · " : ""}${c.email ? `${esc(c.email)}` : ""}</div>
@@ -792,6 +792,47 @@ window.deleteJob = async (jobId) => {
   if (error) return toast(error.message, "error");
   toast("Job and attached records deleted", "success");
   location.hash = "jobs"; route();
+};
+
+// Add / link a customer to a job (pick existing or create new). Also sets the vehicle's owner.
+window.linkCustomerToJob = async (jobId, vehicleId) => {
+  const { data: customers } = await db.from("customers").select("id,name").order("name");
+  const opts = (customers || []).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  openModal("Add customer", `
+    <form id="linkcust-form">
+      <div class="field full" style="margin-bottom:12px"><label>Use existing customer</label>
+        <select id="lc-existing" onchange="document.getElementById('lc-new').style.display = this.value ? 'none' : 'grid'"><option value="">＋ New customer</option>${opts}</select></div>
+      <div id="lc-new" class="form-grid">
+        <div class="field"><label>Name</label><input name="name"></div>
+        <div class="field"><label>Phone</label><input name="phone"></div>
+        <div class="field"><label>Email</label><input name="email"></div>
+        <div class="field"><label>Company</label><input name="company"></div>
+        <div class="field full"><label>Address</label><input name="address"></div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" onclick="closeModalGlobal()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Add</button>
+      </div>
+    </form>`);
+  $("#linkcust-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    let custId = el("lc-existing").value;
+    if (!custId) {
+      const name = f.name.value.trim();
+      if (!name) return toast("Enter a name, or pick an existing customer", "error");
+      const { data, error } = await db.from("customers").insert({
+        name, phone: f.phone.value.trim() || null, email: f.email.value.trim() || null,
+        company: f.company.value.trim() || null, address: f.address.value.trim() || null,
+      }).select("id").single();
+      if (error) return toast(error.message, "error");
+      custId = data.id;
+    }
+    const { error } = await db.from("jobs").update({ customer_id: custId }).eq("id", jobId);
+    if (error) return toast(error.message, "error");
+    if (vehicleId) await db.from("vehicles").update({ customer_id: custId }).eq("id", vehicleId);
+    closeModal(); toast("Customer added", "success"); route();
+  });
 };
 
 window.jobForm = async (id) => {
