@@ -194,7 +194,7 @@ window.customerForm = async (id) => {
         <div class="field full"><label>Notes</label><textarea name="notes">${esc(c.notes)}</textarea></div>
       </div>
       <div class="form-actions">
-        ${id ? `<button type="button" class="btn btn-danger" style="margin-right:auto" onclick="deleteRow('customers','${id}', location.hash.slice(1) || 'jobs')">Delete</button>` : ""}
+        ${id ? `<button type="button" class="btn btn-danger" style="margin-right:auto" onclick="deleteCustomer('${id}', location.hash.slice(1) || 'jobs')">Delete</button>` : ""}
         <button type="button" class="btn btn-ghost" onclick="closeModalGlobal()">Cancel</button>
         <button type="submit" class="btn btn-primary">${id ? "Save" : "Create"}</button>
       </div>
@@ -220,7 +220,7 @@ async function customerDetail(id) {
       <div class="page-sub">${esc(c.company) || ""}</div></div>
       <div class="row-actions">
         <button class="btn" onclick="customerForm('${c.id}')">Edit</button>
-        <button class="btn btn-danger" onclick="deleteRow('customers','${c.id}','customers')">Delete</button>
+        <button class="btn btn-danger" onclick="deleteCustomer('${c.id}','customers')">Delete</button>
       </div></div>
     <div class="panel"><h3>Contact</h3>
       <p><strong>Phone:</strong> ${esc(c.phone) || "—"} &nbsp; <strong>Email:</strong> ${esc(c.email) || "—"}</p>
@@ -305,7 +305,7 @@ window.vehicleForm = async (id, presetCustomer) => {
         <div class="field full"><label>Notes</label><textarea name="notes">${esc(v.notes)}</textarea></div>
       </div>
       <div class="form-actions">
-        ${id ? `<button type="button" class="btn btn-danger" style="margin-right:auto" onclick="deleteRow('vehicles','${id}', location.hash.slice(1) || 'jobs')">Delete</button>` : ""}
+        ${id ? `<button type="button" class="btn btn-danger" style="margin-right:auto" onclick="deleteVehicle('${id}', location.hash.slice(1) || 'jobs')">Delete</button>` : ""}
         <button type="button" class="btn btn-ghost" onclick="closeModalGlobal()">Cancel</button>
         <button type="submit" class="btn btn-primary">${id ? "Save" : "Create"}</button>
       </div>
@@ -333,7 +333,7 @@ async function vehicleDetail(id) {
       <div class="page-sub">${v.customers ? `Owner: <a href="#customers/${v.customers.id}" style="color:var(--blue)">${esc(v.customers.name)}</a>` : "No customer linked"}</div></div>
       <div class="row-actions">
         <button class="btn" onclick="vehicleForm('${v.id}')">Edit</button>
-        <button class="btn btn-danger" onclick="deleteRow('vehicles','${v.id}','vehicles')">Delete</button>
+        <button class="btn btn-danger" onclick="deleteVehicle('${v.id}','vehicles')">Delete</button>
       </div></div>
 
     <div class="panel"><h3>Details</h3>
@@ -1463,6 +1463,32 @@ window.deleteRow = async (table, id, backTo) => {
   if (error) return toast(error.message, "error");
   closeModal(); toast("Deleted", "success");
   location.hash = backTo; route();
+};
+
+// Delete a vehicle and its files (from storage too). Jobs are kept but unlinked.
+window.deleteVehicle = async (id, backTo) => {
+  if (!confirm("Delete this vehicle and all its files? Any jobs stay but are unlinked from it. This cannot be undone.")) return;
+  const { data: files } = await db.from("vehicle_files").select("storage_path").eq("vehicle_id", id);
+  if (files && files.length) await db.storage.from(cfg.FILE_BUCKET).remove(files.map(f => f.storage_path));
+  const { error } = await db.from("vehicles").delete().eq("id", id);
+  if (error) return toast(error.message, "error");
+  closeModal(); toast("Vehicle deleted", "success");
+  location.hash = backTo || "vehicles"; route();
+};
+
+// Delete a customer AND their vehicles + files. Jobs are kept but unlinked.
+window.deleteCustomer = async (id, backTo) => {
+  if (!confirm("Delete this customer, along with their vehicles and files? Any jobs stay but are unlinked. This cannot be undone.")) return;
+  const { data: vehicles } = await db.from("vehicles").select("id").eq("customer_id", id);
+  const vids = (vehicles || []).map(v => v.id);
+  if (vids.length) {
+    const { data: files } = await db.from("vehicle_files").select("storage_path").in("vehicle_id", vids);
+    if (files && files.length) await db.storage.from(cfg.FILE_BUCKET).remove(files.map(f => f.storage_path));
+  }
+  const { error } = await db.from("customers").delete().eq("id", id);
+  if (error) return toast(error.message, "error");
+  closeModal(); toast("Customer deleted", "success");
+  location.hash = backTo || "customers"; route();
 };
 window.closeModalGlobal = closeModal;
 
