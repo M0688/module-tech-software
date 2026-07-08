@@ -658,6 +658,7 @@ window.syncDrive = async () => {
     if (!roots.length) return reset(`No "${cfg.DRIVE_ROOT_FOLDER}" folder found in your Google Drive`, "error");
     const regFolders = await driveList(`'${roots[0].id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`, token);
     let up = 0, skip = 0, fail = 0, found = 0, firstErr = "";
+    const sample = [];
     for (const rf of regFolders) {
       const files = await driveList(`'${rf.id}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed=false`, token, "files(id,name,size,mimeType)");
       if (!files.length) continue;
@@ -668,6 +669,7 @@ window.syncDrive = async () => {
       const { data: existing } = await db.from("vehicle_files").select("original_name").eq("vehicle_id", veh.id);
       const seenNames = new Set((existing || []).map((f) => f.original_name));
       for (const f of files) {
+        if (sample.length < 12) sample.push(`${rf.name}/${f.name} (${f.size ?? "?"}b)`);
         if (seenNames.has(f.name)) { skip++; continue; }
         let blob;
         try {
@@ -686,7 +688,9 @@ window.syncDrive = async () => {
         if (error) { if (!firstErr) firstErr = "save: " + error.message; fail++; } else { up++; seenNames.add(f.name); }
       }
     }
-    reset(`${up} added · ${skip} skipped · ${fail} failed · found ${found} file${found === 1 ? "" : "s"}${firstErr ? " — " + firstErr : ""}`, fail ? "error" : "success");
+    const summary = `Google Drive sync\n\nAdded: ${up}\nSkipped: ${skip}\nFailed: ${fail}\nFound: ${found} file(s)${firstErr ? "\n\nFirst error: " + firstErr : ""}${sample.length ? "\n\nFiles seen:\n" + sample.join("\n") : ""}`;
+    alert(summary);
+    reset(`${up} added · ${skip} skipped · ${fail} failed · found ${found}`, fail ? "error" : "success");
     route();
   } catch (e) {
     reset("Sync error: " + e.message, "error");
