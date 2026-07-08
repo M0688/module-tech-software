@@ -657,35 +657,36 @@ window.syncDrive = async () => {
     const roots = await driveList(`name='${cfg.DRIVE_ROOT_FOLDER}' and mimeType='application/vnd.google-apps.folder' and trashed=false`, token);
     if (!roots.length) return reset(`No "${cfg.DRIVE_ROOT_FOLDER}" folder found in your Google Drive`, "error");
     const regFolders = await driveList(`'${roots[0].id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`, token);
-    let up = 0, skip = 0, fail = 0;
+    let up = 0, skip = 0, fail = 0, found = 0, firstErr = "";
     for (const rf of regFolders) {
-      const files = await driveList(`'${rf.id}' in parents and mimeType!='application/vnd.google-apps.folder' and trashed=false`, token, "files(id,name,size)");
+      const files = await driveList(`'${rf.id}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed=false`, token, "files(id,name,size,mimeType)");
       if (!files.length) continue;
+      found += files.length;
       if (btn) btn.textContent = "Syncing " + rf.name + "…";
       const veh = await vehicleForReg(rf.name);
       const jobId = await jobForVehicle(veh.id, veh.customer_id);
-      const { data: existing } = await db.from("vehicle_files").select("original_name,size_bytes").eq("vehicle_id", veh.id);
-      const seen = new Set((existing || []).map((f) => f.original_name + "|" + f.size_bytes));
+      const { data: existing } = await db.from("vehicle_files").select("original_name").eq("vehicle_id", veh.id);
+      const seenNames = new Set((existing || []).map((f) => f.original_name));
       for (const f of files) {
-        const dsize = Number(f.size || 0);
-        if (dsize === 0 || seen.has(f.name + "|" + dsize)) { skip++; continue; }
+        if (seenNames.has(f.name)) { skip++; continue; }
         let blob;
         try {
           const r = await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&supportsAllDrives=true`, { headers: { Authorization: "Bearer " + token } });
-          if (!r.ok) throw 0;
+          if (!r.ok) { if (!firstErr) firstErr = "download " + r.status; fail++; continue; }
           blob = await r.blob();
-        } catch (_) { fail++; continue; }
+        } catch (ex) { if (!firstErr) firstErr = "download: " + ex.message; fail++; continue; }
+        if (blob.size === 0) { skip++; continue; }
         const path = `${veh.id}/${Date.now()}_${Math.random().toString(36).slice(2, 6)}_${f.name.replace(/[^\w.\-]+/g, "_")}`;
         const { error: ue } = await db.storage.from(cfg.FILE_BUCKET).upload(path, blob);
-        if (ue) { fail++; continue; }
+        if (ue) { if (!firstErr) firstErr = "upload: " + ue.message; fail++; continue; }
         const { error } = await db.from("vehicle_files").insert({
           vehicle_id: veh.id, job_id: jobId, kind: "other", label: null,
           notes: "Synced from Google Drive", storage_path: path, original_name: f.name, size_bytes: blob.size,
         });
-        if (error) fail++; else { up++; seen.add(f.name + "|" + dsize); }
+        if (error) { if (!firstErr) firstErr = "save: " + error.message; fail++; } else { up++; seenNames.add(f.name); }
       }
     }
-    reset(`Drive sync: ${up} file${up === 1 ? "" : "s"} added${skip ? `, ${skip} already there` : ""}${fail ? `, ${fail} failed` : ""}`, fail ? "error" : "success");
+    reset(`${up} added · ${skip} skipped · ${fail} failed · found ${found} file${found === 1 ? "" : "s"}${firstErr ? " — " + firstErr : ""}`, fail ? "error" : "success");
     route();
   } catch (e) {
     reset("Sync error: " + e.message, "error");
