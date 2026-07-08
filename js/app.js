@@ -633,7 +633,18 @@ async function vehicleForReg(reg) {
   const t = normReg(reg);
   const found = (vs || []).find((v) => normReg(v.registration) === t);
   if (found) return found;
-  const { data } = await db.from("vehicles").insert({ registration: reg.trim() }).select("id,customer_id").single();
+  // new vehicle — auto-fill details from DVLA/MOT
+  const payload = { registration: reg.trim() };
+  try {
+    const { data: d } = await db.functions.invoke("lookup-vehicle", { body: { reg: reg.trim() } });
+    if (d && !d.error) {
+      if (d.make) payload.make = d.make;
+      if (d.model) payload.model = d.model;
+      if (d.year) payload.year = d.year;
+      if (d.engine) payload.engine = d.engine;
+    }
+  } catch (_) { /* lookup is best-effort */ }
+  const { data } = await db.from("vehicles").insert(payload).select("id,customer_id").single();
   return data;
 }
 async function jobForVehicle(vehicleId, customerId) {
