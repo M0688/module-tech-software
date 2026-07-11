@@ -708,10 +708,53 @@ window.syncDrive = async () => {
   }
 };
 
+/* ---------- per-job checklist ---------- */
+const JOB_CHECKLIST = [
+  "Obtain reg", "Diagnostic scan", "Read", "Write",
+  "Resets (if applicable)", "Fuse / module removal (if applicable)",
+  "Start vehicle 3 times", "Social media pics",
+];
+function jobChecklist(j) {
+  const saved = Array.isArray(j.checklist) ? j.checklist : null;
+  if (saved && saved.length) return saved;
+  return JOB_CHECKLIST.map((label) => ({ label, done: false, na: false }));
+}
+function checklistRowsHtml(items) {
+  return items.map((it, i) => `
+    <div class="chk-item ${it.done ? "done" : ""} ${it.na ? "na" : ""}">
+      <input type="checkbox" ${it.done ? "checked" : ""} onchange="toggleChk(${i},'done')">
+      <span class="chk-label">${esc(it.label)}</span>
+      <button type="button" class="chk-na" onclick="toggleChk(${i},'na')">${it.na ? "N/A ✓" : "N/A"}</button>
+    </div>`).join("");
+}
+function renderChecklist() {
+  const c = window._chk;
+  if (!c) return;
+  const total = c.items.length;
+  const done = c.items.filter((it) => it.done || it.na).length;
+  if (el("chk-list")) el("chk-list").innerHTML = checklistRowsHtml(c.items);
+  if (el("chk-fill")) el("chk-fill").style.width = (total ? done / total * 100 : 0) + "%";
+  if (el("chk-count")) el("chk-count").textContent = `${done} of ${total} complete`;
+}
+window.toggleChk = async (i, field) => {
+  const c = window._chk;
+  if (!c) return;
+  const it = c.items[i];
+  if (field === "done") { it.done = !it.done; if (it.done) it.na = false; }
+  else { it.na = !it.na; if (it.na) it.done = false; }
+  renderChecklist();
+  const { error } = await db.from("jobs").update({ checklist: c.items }).eq("id", c.jobId);
+  if (error) toast(error.message, "error");
+};
+
 async function jobDetail(id) {
   const { data: j } = await db.from("jobs").select("*, vehicles(*), customers(*)").eq("id", id).single();
   if (!j) { el("view").innerHTML = `<div class="empty">Job not found.</div>`; return; }
   const v = j.vehicles, c = j.customers;
+  const chkItems = jobChecklist(j);
+  window._chk = { jobId: id, items: chkItems };
+  const chkTotal = chkItems.length;
+  const chkDone = chkItems.filter((it) => it.done || it.na).length;
   const [{ data: files }, { data: invoices }, { data: diagRuns }] = await Promise.all([
     db.from("vehicle_files").select("*").eq("job_id", id).order("created_at", { ascending: false }),
     db.from("invoices").select("*").eq("job_id", id).order("created_at", { ascending: false }),
@@ -748,6 +791,13 @@ async function jobDetail(id) {
     </div>
 
     ${j.description ? `<div class="panel"><h3>Notes</h3><p class="muted" style="white-space:pre-wrap">${esc(j.description)}</p></div>` : ""}
+
+    <div class="page-head" style="margin-bottom:8px"><h1 style="font-size:18px">Checklist</h1>
+      <span class="page-sub" id="chk-count">${chkDone} of ${chkTotal} complete</span></div>
+    <div class="panel" style="margin-bottom:24px">
+      <div class="chk-bar"><div class="chk-bar-fill" id="chk-fill" style="width:${chkTotal ? chkDone / chkTotal * 100 : 0}%"></div></div>
+      <div id="chk-list">${checklistRowsHtml(chkItems)}</div>
+    </div>
 
     <div class="page-head"><h1 style="font-size:18px">Invoice</h1>
       <button class="btn btn-primary btn-sm" onclick="location.hash='invoices/new/${j.id}'">+ Create invoice</button></div>
