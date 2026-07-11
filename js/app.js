@@ -710,7 +710,7 @@ window.syncDrive = async () => {
 
 /* ---------- per-job checklist ---------- */
 const JOB_CHECKLIST = [
-  "Obtain reg", "Diagnostic scan", "Read", "Write",
+  "Obtain reg", "Diagnostic scan", "Read", "Attach jump leads (if necessary)", "Write",
   "Resets (if applicable)", "Fuse / module removal (if applicable)",
   "Clear DTCs", "Start vehicle 3 times", "Social media pics",
 ];
