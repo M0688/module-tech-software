@@ -715,9 +715,13 @@ const JOB_CHECKLIST = [
   "Clear DTCs", "Start vehicle 3 times", "Social media pics",
 ];
 function jobChecklist(j) {
-  const saved = Array.isArray(j.checklist) ? j.checklist : null;
-  if (saved && saved.length) return saved;
-  return JOB_CHECKLIST.map((label) => ({ label, done: false, na: false }));
+  // Always use the current template order/steps, carrying over any saved done/na by label.
+  const byLabel = {};
+  (Array.isArray(j.checklist) ? j.checklist : []).forEach((it) => { if (it && it.label) byLabel[it.label] = it; });
+  return JOB_CHECKLIST.map((label) => {
+    const prev = byLabel[label];
+    return { label, done: prev ? !!prev.done : false, na: prev ? !!prev.na : false };
+  });
 }
 function checklistRowsHtml(items) {
   return items.map((it, i) => `
