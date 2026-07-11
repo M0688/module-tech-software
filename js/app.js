@@ -712,7 +712,7 @@ window.syncDrive = async () => {
 const JOB_CHECKLIST = [
   "Obtain reg", "Diagnostic scan", "Read", "Write",
   "Resets (if applicable)", "Fuse / module removal (if applicable)",
-  "Start vehicle 3 times", "Social media pics",
+  "Clear DTCs", "Start vehicle 3 times", "Social media pics",
 ];
 function jobChecklist(j) {
   const saved = Array.isArray(j.checklist) ? j.checklist : null;
