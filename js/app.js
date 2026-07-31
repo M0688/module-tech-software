@@ -751,6 +751,14 @@ window.toggleChk = async (i, field) => {
   if (error) toast(error.message, "error");
 };
 
+/* ---------- "had to buy a file" cost ---------- */
+const FILE_COST = 50;
+window.toggleFilePurchased = async (jobId, checked) => {
+  const { error } = await db.from("jobs").update({ file_purchased: checked }).eq("id", jobId);
+  if (error) return toast(error.message, "error");
+  toast(checked ? `File cost added (£${FILE_COST})` : "File cost removed", "success");
+};
+
 async function jobDetail(id) {
   const { data: j } = await db.from("jobs").select("*, vehicles(*), customers(*)").eq("id", id).single();
   if (!j) { el("view").innerHTML = `<div class="empty">Job not found.</div>`; return; }
@@ -773,6 +781,11 @@ async function jobDetail(id) {
         <button class="btn" onclick="jobForm('${j.id}')">Edit job</button>
         <button class="btn btn-danger" onclick="deleteJob('${j.id}')">Delete</button>
       </div></div>
+
+    <label style="display:inline-flex;align-items:center;gap:9px;margin-bottom:18px;cursor:pointer;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 14px">
+      <input type="checkbox" style="width:18px;height:18px;accent-color:var(--primary);cursor:pointer" ${j.file_purchased ? "checked" : ""} onchange="toggleFilePurchased('${j.id}', this.checked)">
+      <span>Had to buy a file <span class="muted">(£${FILE_COST} cost)</span></span>
+    </label>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
       <div class="panel">
@@ -1593,12 +1606,15 @@ async function flowEditor(id) {
 views.reports = async () => {
   const [{ data: invoices }, { data: jobs }] = await Promise.all([
     db.from("invoices").select("total,status,issue_date, customers(name)"),
-    db.from("jobs").select("status,job_type"),
+    db.from("jobs").select("status,job_type,file_purchased"),
   ]);
   const sum = (arr) => arr.reduce((s, x) => s + (Number(x.total) || 0), 0);
   const invoiced = sum(invoices);
   const paid = sum(invoices.filter(i => i.status === "paid"));
   const outstanding = sum(invoices.filter(i => i.status !== "paid"));
+  const fileCount = jobs.filter(j => j.file_purchased).length;
+  const fileCost = fileCount * FILE_COST;
+  const net = paid - fileCost;
 
   const byMonth = {};
   invoices.filter(i => i.status === "paid" && i.issue_date).forEach(i => {
@@ -1633,6 +1649,8 @@ views.reports = async () => {
       <div class="stat-card"><div class="num">${fmtMoney(invoiced)}</div><div class="label">Total invoiced</div></div>
       <div class="stat-card"><div class="num" style="color:var(--green)">${fmtMoney(paid)}</div><div class="label">Paid</div></div>
       <div class="stat-card"><div class="num" style="color:var(--red)">${fmtMoney(outstanding)}</div><div class="label">Outstanding</div></div>
+      <div class="stat-card"><div class="num" style="color:var(--red)">${fmtMoney(fileCost)}</div><div class="label">File costs (${fileCount})</div></div>
+      <div class="stat-card"><div class="num" style="color:var(--green)">${fmtMoney(net)}</div><div class="label">Net (paid − costs)</div></div>
       <div class="stat-card"><div class="num">${jobs.length}</div><div class="label">Jobs total</div></div>
     </div>
 
