@@ -1661,6 +1661,7 @@ views.reports = async () => {
   const fileCost = fileCount * FILE_COST;
   const otherCosts = (expenses || []).reduce((s, x) => s + (Number(x.amount) || 0), 0);
   const net = paid - fileCost - otherCosts;
+  const margin = paid > 0 ? (net / paid) * 100 : 0;
 
   const byMonth = {};
   invoices.filter(i => i.status === "paid" && i.issue_date).forEach(i => {
@@ -1698,6 +1699,7 @@ views.reports = async () => {
       <div class="stat-card"><div class="num" style="color:var(--red)">${fmtMoney(fileCost)}</div><div class="label">File costs (${fileCount})</div></div>
       <div class="stat-card"><div class="num" style="color:var(--red)">${fmtMoney(otherCosts)}</div><div class="label">Other costs</div></div>
       <div class="stat-card"><div class="num" style="color:var(--green)">${fmtMoney(net)}</div><div class="label">Net (paid − costs)</div></div>
+      <div class="stat-card"><div class="num" style="color:${margin >= 0 ? "var(--green)" : "var(--red)"}">${paid > 0 ? margin.toFixed(1) + "%" : "—"}</div><div class="label">Profit margin</div></div>
       <div class="stat-card"><div class="num">${jobs.length}</div><div class="label">Jobs total</div></div>
     </div>
 
