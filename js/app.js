@@ -1603,10 +1603,55 @@ async function flowEditor(id) {
 /* ===========================================================
    REPORTS
    =========================================================== */
+views.costs = async () => {
+  const { data } = await db.from("expenses").select("*").order("spent_on", { ascending: false });
+  const total = (data || []).reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  el("view").innerHTML = `
+    <div class="page-head"><div><h1>Costs</h1>
+      <div class="page-sub">Business expenses — tools, subscriptions, etc. Total: <strong>${fmtMoney(total)}</strong></div></div>
+      <button class="btn btn-primary" onclick="costForm()">+ Add cost</button></div>
+    <div class="muted" style="font-size:13px;margin-bottom:14px">Per-job "had to buy a file" costs are tracked on each job; these are your general/overhead costs. Both are subtracted in Reports.</div>
+    <div class="table-wrap">${data.length ? `<table>
+      <thead><tr><th>Date</th><th>Description</th><th>Amount</th><th></th></tr></thead>
+      <tbody>${data.map(x => `<tr onclick="costForm('${x.id}')">
+        <td class="muted">${fmtDate(x.spent_on)}</td>
+        <td>${esc(x.description) || "—"}</td>
+        <td>${fmtMoney(x.amount)}</td>
+        <td class="row-actions"><button class="btn btn-sm" onclick="event.stopPropagation();costForm('${x.id}')">Edit</button></td></tr>`).join("")}</tbody>
+    </table>` : `<div class="empty">No costs recorded yet. Click "Add cost" to log one.</div>`}</div>`;
+};
+
+window.costForm = async (id) => {
+  let x = { spent_on: new Date().toISOString().slice(0, 10) };
+  if (id) x = (await db.from("expenses").select("*").eq("id", id).single()).data;
+  openModal(id ? "Edit cost" : "Add cost", `
+    <form id="cost-form">
+      <div class="form-grid">
+        <div class="field full"><label>Description</label><input name="description" value="${esc(x.description)}" placeholder="e.g. Autotuner subscription"></div>
+        <div class="field"><label>Amount (£)</label><input name="amount" data-type="number" value="${x.amount ?? ""}"></div>
+        <div class="field"><label>Date</label><input type="date" name="spent_on" value="${x.spent_on || ""}"></div>
+      </div>
+      <div class="form-actions">
+        ${id ? `<button type="button" class="btn btn-danger" style="margin-right:auto" onclick="deleteRow('expenses','${id}','costs')">Delete</button>` : ""}
+        <button type="button" class="btn btn-ghost" onclick="closeModalGlobal()">Cancel</button>
+        <button type="submit" class="btn btn-primary">${id ? "Save" : "Add"}</button>
+      </div>
+    </form>`);
+  $("#cost-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const payload = readForm(e.target);
+    const q = id ? db.from("expenses").update(payload).eq("id", id) : db.from("expenses").insert(payload);
+    const { error } = await q;
+    if (error) return toast(error.message, "error");
+    closeModal(); toast(id ? "Cost saved" : "Cost added", "success"); route();
+  });
+};
+
 views.reports = async () => {
-  const [{ data: invoices }, { data: jobs }] = await Promise.all([
+  const [{ data: invoices }, { data: jobs }, { data: expenses }] = await Promise.all([
     db.from("invoices").select("total,status,issue_date, customers(name)"),
     db.from("jobs").select("status,job_type,file_purchased"),
+    db.from("expenses").select("amount"),
   ]);
   const sum = (arr) => arr.reduce((s, x) => s + (Number(x.total) || 0), 0);
   const invoiced = sum(invoices);
@@ -1614,7 +1659,8 @@ views.reports = async () => {
   const outstanding = sum(invoices.filter(i => i.status !== "paid"));
   const fileCount = jobs.filter(j => j.file_purchased).length;
   const fileCost = fileCount * FILE_COST;
-  const net = paid - fileCost;
+  const otherCosts = (expenses || []).reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  const net = paid - fileCost - otherCosts;
 
   const byMonth = {};
   invoices.filter(i => i.status === "paid" && i.issue_date).forEach(i => {
@@ -1650,6 +1696,7 @@ views.reports = async () => {
       <div class="stat-card"><div class="num" style="color:var(--green)">${fmtMoney(paid)}</div><div class="label">Paid</div></div>
       <div class="stat-card"><div class="num" style="color:var(--red)">${fmtMoney(outstanding)}</div><div class="label">Outstanding</div></div>
       <div class="stat-card"><div class="num" style="color:var(--red)">${fmtMoney(fileCost)}</div><div class="label">File costs (${fileCount})</div></div>
+      <div class="stat-card"><div class="num" style="color:var(--red)">${fmtMoney(otherCosts)}</div><div class="label">Other costs</div></div>
       <div class="stat-card"><div class="num" style="color:var(--green)">${fmtMoney(net)}</div><div class="label">Net (paid − costs)</div></div>
       <div class="stat-card"><div class="num">${jobs.length}</div><div class="label">Jobs total</div></div>
     </div>
