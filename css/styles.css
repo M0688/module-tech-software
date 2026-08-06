@@ -149,6 +149,22 @@ tbody tr:last-child td { border-bottom: none; }
 .chk-na:hover { color: var(--text); }
 .chk-item.na .chk-na { background: var(--primary-dim); color: #fff; border-color: transparent; }
 
+/* ---------- Printable vehicle label ---------- */
+#print-label { display: none; }
+#print-label .pl-reg { font-family: Arial, Helvetica, sans-serif; font-size: 30pt; font-weight: 800; letter-spacing: 1px; color: #000; }
+#print-label .pl-veh { font-family: Arial, Helvetica, sans-serif; font-size: 13pt; margin-top: 3mm; text-transform: uppercase; color: #000; }
+@media print {
+  body.printing-label #app,
+  body.printing-label #login-screen,
+  body.printing-label #modal-overlay,
+  body.printing-label #toast { display: none !important; }
+  body.printing-label { background: #fff; }
+  body.printing-label #print-label {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100vh; text-align: center;
+  }
+}
+
 /* ---------- Forms / modal ---------- */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
 .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; width: 100%; max-width: 520px; max-height: 90vh; display: flex; flex-direction: column; }

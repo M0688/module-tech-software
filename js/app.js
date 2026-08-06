@@ -751,6 +751,23 @@ window.toggleChk = async (i, field) => {
   if (error) toast(error.message, "error");
 };
 
+/* ---------- print a vehicle label (reg + make/model) ---------- */
+// Default page size fits a Brother QL-700 DK-11201 address label (29 x 90 mm).
+window.printLabel = (make, model, reg) => {
+  const veh = [make, model].filter(Boolean).join(" ");
+  el("print-label").innerHTML = `<div class="pl-reg">${esc(reg || "")}</div>${veh ? `<div class="pl-veh">${esc(veh)}</div>` : ""}`;
+  let st = document.getElementById("label-page-style");
+  if (!st) { st = document.createElement("style"); st.id = "label-page-style"; document.head.appendChild(st); }
+  st.textContent = "@page { size: 90mm 29mm; margin: 0; }";
+  document.body.classList.add("printing-label");
+  window.print();
+};
+window.addEventListener("afterprint", () => {
+  document.body.classList.remove("printing-label");
+  const st = document.getElementById("label-page-style");
+  if (st) st.textContent = "";  // clear so it doesn't affect invoice printing
+});
+
 /* ---------- "had to buy a file" cost ---------- */
 const FILE_COST = 50;
 window.toggleFilePurchased = async (jobId, checked) => {
@@ -799,7 +816,10 @@ async function jobDetail(id) {
       </div>
       <div class="panel">
         <div class="page-head" style="margin-bottom:10px"><h3 style="margin:0">Vehicle</h3>
-          <button class="btn btn-sm" onclick="${v ? `vehicleForm('${v.id}')` : `jobForm('${j.id}')`}">${v ? "Edit" : "Add"}</button></div>
+          <div class="row-actions">
+            ${v ? `<button class="btn btn-sm" onclick="printLabel('${esc(v.make || "")}','${esc(v.model || "")}','${esc(v.registration || "")}')">🖨 Label</button>` : ""}
+            <button class="btn btn-sm" onclick="${v ? `vehicleForm('${v.id}')` : `jobForm('${j.id}')`}">${v ? "Edit" : "Add"}</button>
+          </div></div>
         ${v ? `<div><strong>${esc(`${v.make || ""} ${v.model || ""}`) || "Vehicle"}</strong> <span class="chip">${esc(v.registration || "—")}</span></div>
           <div class="muted" style="margin-top:6px">${[v.year ? `Year ${v.year}` : "", v.engine ? esc(v.engine) : "", v.ecu_type ? `ECU ${esc(v.ecu_type)}` : "", v.gearbox ? `Gearbox ${esc(v.gearbox)}` : ""].filter(Boolean).join(" · ")}</div>
           ${v.vin ? `<div class="muted" style="margin-top:4px">VIN: ${esc(v.vin)}</div>` : ""}`
