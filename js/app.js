@@ -752,13 +752,13 @@ window.toggleChk = async (i, field) => {
 };
 
 /* ---------- print a vehicle label (reg + make/model) ---------- */
-// Default page size fits a Brother QL-700 DK-11201 address label (29 x 90 mm).
+// Sized for a Brother QL-700 62mm continuous roll (DK-22205), 3mm margin.
 window.printLabel = (make, model, reg) => {
   const veh = [make, model].filter(Boolean).join(" ");
   el("print-label").innerHTML = `<div class="pl-reg">${esc(reg || "")}</div>${veh ? `<div class="pl-veh">${esc(veh)}</div>` : ""}`;
   let st = document.getElementById("label-page-style");
   if (!st) { st = document.createElement("style"); st.id = "label-page-style"; document.head.appendChild(st); }
-  st.textContent = "@page { size: 90mm 29mm; margin: 0; }";
+  st.textContent = "@page { size: 62mm 40mm; margin: 3mm; }";
   document.body.classList.add("printing-label");
   window.print();
 };
