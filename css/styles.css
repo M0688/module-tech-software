@@ -151,8 +151,8 @@ tbody tr:last-child td { border-bottom: none; }
 
 /* ---------- Printable vehicle label ---------- */
 #print-label { display: none; }
-#print-label .pl-reg { font-family: Arial, Helvetica, sans-serif; font-size: 24pt; font-weight: 800; letter-spacing: 1px; color: #000; white-space: nowrap; }
-#print-label .pl-veh { font-family: Arial, Helvetica, sans-serif; font-size: 11pt; margin-top: 2mm; text-transform: uppercase; color: #000; }
+#print-label .pl-reg { font-family: Arial, Helvetica, sans-serif; font-size: 26pt; font-weight: 800; letter-spacing: 1px; color: #000; white-space: nowrap; }
+#print-label .pl-veh { font-family: Arial, Helvetica, sans-serif; font-size: 12pt; margin-top: 2mm; text-transform: uppercase; color: #000; }
 @media print {
   body.printing-label #app,
   body.printing-label #login-screen,
