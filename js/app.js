@@ -758,7 +758,7 @@ window.printLabel = (make, model, reg) => {
   el("print-label").innerHTML = `<div class="pl-reg">${esc(reg || "")}</div>${veh ? `<div class="pl-veh">${esc(veh)}</div>` : ""}`;
   let st = document.getElementById("label-page-style");
   if (!st) { st = document.createElement("style"); st.id = "label-page-style"; document.head.appendChild(st); }
-  st.textContent = "@page { size: 62mm 40mm; margin: 0; }";
+  st.textContent = "@page { size: 62mm 30mm; margin: 0; }";
   document.body.classList.add("printing-label");
   window.print();
 };
