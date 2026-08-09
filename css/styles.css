@@ -307,6 +307,9 @@ tbody tr:last-child td { border-bottom: none; }
 .result-panel { border-color: var(--green); background: #0f2419; }
 .result-text { font-size: 18px; font-weight: 600; line-height: 1.4; }
 
+.save-progress { border-style: dashed; }
+.pill-inprogress { display: inline-block; margin-left: 6px; padding: 2px 9px; border-radius: 20px; font-size: 11px; font-weight: 700; color: var(--primary); background: var(--surface-2); vertical-align: middle; }
+
 @media print {
   .sidebar, .page-head .row-actions, .no-print { display: none !important; }
   .app { grid-template-columns: 1fr; }

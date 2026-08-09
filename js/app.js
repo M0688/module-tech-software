@@ -770,7 +770,7 @@ async function jobDetail(id) {
   const [{ data: files }, { data: invoices }, { data: diagRuns }] = await Promise.all([
     db.from("vehicle_files").select("*").eq("job_id", id).order("created_at", { ascending: false }),
     db.from("invoices").select("*").eq("job_id", id).order("created_at", { ascending: false }),
-    db.from("diagnostic_runs").select("id,title,created_at").eq("job_id", id).order("created_at", { ascending: false }),
+    db.from("diagnostic_runs").select("id,title,created_at,data").eq("job_id", id).order("created_at", { ascending: false }),
   ]);
   el("view").innerHTML = `
     <div class="breadcrumb"><a href="#jobs">Jobs</a> / ${fmtJobNo(j.job_number)}</div>
@@ -847,9 +847,14 @@ async function jobDetail(id) {
       <button class="btn btn-primary btn-sm" onclick="pickDiagnostic('${j.id}')">+ New diagnostic</button></div>
     <div class="table-wrap">${diagRuns.length ? `<table>
       <thead><tr><th>Diagnostic</th><th>Recorded</th><th></th></tr></thead>
-      <tbody>${diagRuns.map(r => `<tr onclick="location.hash='diagnostics/view/${r.id}'">
-        <td>${esc(r.title || "Diagnostic")}</td><td class="muted">${fmtDate(r.created_at)}</td>
-        <td class="row-actions"><button class="btn btn-sm" onclick="event.stopPropagation();location.hash='diagnostics/view/${r.id}'">View</button></td></tr>`).join("")}</tbody>
+      <tbody>${diagRuns.map(r => {
+        const inProg = r.data && r.data.status === "in_progress";
+        const target = inProg ? `diagnostics/resume/${r.id}` : `diagnostics/view/${r.id}`;
+        return `<tr onclick="location.hash='${target}'">
+          <td>${esc(r.title || "Diagnostic")}${inProg ? ` <span class="pill-inprogress">In progress</span>` : ""}</td>
+          <td class="muted">${fmtDate(r.created_at)}</td>
+          <td class="row-actions"><button class="btn btn-sm ${inProg ? "btn-primary" : ""}" onclick="event.stopPropagation();location.hash='${target}'">${inProg ? "Resume" : "View"}</button></td></tr>`;
+      }).join("")}</tbody>
     </table>` : `<div class="empty">No diagnostics recorded for this job yet.</div>`}</div>`;
 }
 
@@ -1384,6 +1389,7 @@ views.diagnostics = async (rest) => {
   if (rest[0] === "newtree") return treeEditor(null);
   if (rest[0] === "edit") return dispatchFlow(rest[1], "edit");
   if (rest[0] === "run") return dispatchFlow(rest[1], "run", rest[2]);
+  if (rest[0] === "resume") return resumeTree(rest[1]);
   if (rest[0] === "view") return flowRunView(rest[1]);
   const { data } = await db.from("diagnostic_flows").select("*").order("category").order("title");
   el("view").innerHTML = `
@@ -1790,7 +1796,25 @@ async function treeRun(flowId, presetJobId) {
   ]);
   if (!f) { el("view").innerHTML = `<div class="empty">Tree not found.</div>`; return; }
   const nodes = (f.tree && f.tree.nodes) || [];
-  window._treeRun = { flowId, title: f.title, jobs: jobs || [], nodes, presetJobId, path: [], current: nodes[0] ? nodes[0].id : null, conclusion: null };
+  window._treeRun = { flowId, runId: null, title: f.title, jobs: jobs || [], nodes, presetJobId, path: [], current: nodes[0] ? nodes[0].id : null, conclusion: null };
+  renderTreeRun();
+}
+
+// Resume a part-finished run saved against a job.
+async function resumeTree(runId) {
+  const { data: run } = await db.from("diagnostic_runs").select("*").eq("id", runId).single();
+  if (!run) { el("view").innerHTML = `<div class="empty">Saved progress not found.</div>`; return; }
+  const [{ data: f }, { data: jobs }] = await Promise.all([
+    db.from("diagnostic_flows").select("*").eq("id", run.flow_id).single(),
+    db.from("jobs").select("id,job_number,customers(name),vehicles(registration)").order("job_number", { ascending: false }),
+  ]);
+  if (!f) { el("view").innerHTML = `<div class="empty">The template for this saved run no longer exists.</div>`; return; }
+  const nodes = (f.tree && f.tree.nodes) || [];
+  const d = run.data || {};
+  let current = d.current;
+  if (!nodes.some(n => n.id === current)) current = nodes[0] ? nodes[0].id : null; // tree changed since saving
+  window._treeRun = { flowId: run.flow_id, runId: run.id, title: f.title, jobs: jobs || [], nodes,
+    presetJobId: run.job_id, path: (d.path || []), current, conclusion: d.conclusion ?? null };
   renderTreeRun();
 }
 
@@ -1820,18 +1844,24 @@ function renderTreeRun() {
   }
 
   const jobOpts = (st.jobs || []).map(j => `<option value="${j.id}" ${j.id === st.presetJobId ? "selected" : ""}>${esc(fmtJobNo(j.job_number))}${j.customers ? " — " + esc(j.customers.name) : ""}${j.vehicles ? " (" + esc(j.vehicles.registration || "") + ")" : ""}</option>`).join("");
+  const jobSelect = `<select id="treerun-job" onchange="window._treeRun.presetJobId=this.value"><option value="">— choose a job —</option>${jobOpts}</select>`;
 
   el("view").innerHTML = `
     <div class="breadcrumb"><a href="#diagnostics">Diagnostics</a> / ${esc(st.title)}</div>
-    <div class="page-head"><div><h1>🌿 ${esc(st.title)}</h1></div>
+    <div class="page-head"><div><h1>🌿 ${esc(st.title)}</h1>
+      ${st.runId ? `<div class="page-sub">💾 Saved to a job — your progress is being kept</div>` : ""}</div>
       <div class="row-actions">${st.path.length ? `<button class="btn btn-sm" onclick="treeBack()">← Back</button>` : ""}<button class="btn btn-sm" onclick="treeRestart()">Restart</button></div></div>
     ${trail}
     ${body}
-    ${done ? `<div class="panel"><div class="field"><label>Save this result to a job</label>
-      <select id="treerun-job"><option value="">— choose a job —</option>${jobOpts}</select></div>
-      <div class="form-actions">
-        <button class="btn btn-ghost" onclick="treeRestart()">Run again</button>
-        <button class="btn btn-primary" onclick="treeSaveRun()">Save to job</button></div></div>` : ""}`;
+    ${done
+      ? `<div class="panel"><div class="field"><label>Save this result to a job</label>${jobSelect}</div>
+          <div class="form-actions">
+            <button class="btn btn-ghost" onclick="treeRestart()">Run again</button>
+            <button class="btn btn-primary" onclick="treeSaveRun()">${st.runId ? "Finish & save" : "Save to job"}</button></div></div>`
+      : `<div class="panel save-progress">
+          <div class="field"><label>Not finished? Save your progress to a job and pick it up later</label>${jobSelect}</div>
+          <div class="form-actions">
+            <button class="btn" onclick="treeSaveProgress()">💾 ${st.runId ? "Update saved progress" : "Save & finish later"}</button></div></div>`}`;
 }
 
 window.treeAnswer = (ai) => {
@@ -1856,14 +1886,40 @@ window.treeRestart = () => {
   st.path = []; st.conclusion = null; st.current = st.nodes[0] ? st.nodes[0].id : null;
   renderTreeRun();
 };
+// Save part-way through so the run can be resumed later. Married to a job.
+// Updates the existing saved row if there is one, otherwise creates it.
+window.treeSaveProgress = async () => {
+  const st = window._treeRun;
+  const jobId = (el("treerun-job") && el("treerun-job").value) || st.presetJobId;
+  if (!jobId) return toast("Pick a job to save your progress against", "error");
+  const payload = {
+    flow_id: st.flowId, job_id: jobId, title: st.title,
+    data: { tree: true, status: "in_progress", current: st.current, path: st.path, conclusion: null },
+  };
+  let error;
+  if (st.runId) {
+    ({ error } = await db.from("diagnostic_runs").update(payload).eq("id", st.runId));
+  } else {
+    const res = await db.from("diagnostic_runs").insert(payload).select("id").single();
+    error = res.error; if (res.data) st.runId = res.data.id;
+  }
+  if (error) return toast(error.message, "error");
+  toast("Progress saved — resume it any time from the job", "success");
+  location.hash = "jobs/" + jobId;
+};
+
 window.treeSaveRun = async () => {
   const st = window._treeRun;
-  const jobId = el("treerun-job").value;
+  const jobId = (el("treerun-job") && el("treerun-job").value) || st.presetJobId;
   if (!jobId) return toast("Choose a job to save this against", "error");
-  const { error } = await db.from("diagnostic_runs").insert({
+  const payload = {
     flow_id: st.flowId, job_id: jobId, title: st.title,
-    data: { tree: true, path: st.path.map(p => ({ q: p.q, a: p.a })), conclusion: st.conclusion },
-  });
+    data: { tree: true, status: "complete", path: st.path.map(p => ({ q: p.q, a: p.a })), conclusion: st.conclusion },
+  };
+  // If this was a resumed/part-saved run, complete THAT record instead of making a duplicate.
+  const { error } = st.runId
+    ? await db.from("diagnostic_runs").update(payload).eq("id", st.runId)
+    : await db.from("diagnostic_runs").insert(payload);
   if (error) return toast(error.message, "error");
   toast("Saved to job", "success");
   location.hash = "jobs/" + jobId;
