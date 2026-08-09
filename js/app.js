@@ -1460,13 +1460,19 @@ async function flowRunForm(flowId, presetJobId) {
     return `<input id="${id}" type="text">`;
   };
 
+  const rjob = (jobs || []).find(j => j.id === presetJobId);
+  const rjobFixed = !!presetJobId;
+  const rjobLabel = rjob ? esc(fmtJobNo(rjob.job_number)) + (rjob.customers ? " — " + esc(rjob.customers.name) : "") + (rjob.vehicles ? " (" + esc(rjob.vehicles.registration || "") + ")" : "") : "";
+  const rback = rjobFixed ? `jobs/${presetJobId}` : "diagnostics";
+  const rbackLabel = rjobFixed && rjob ? esc(fmtJobNo(rjob.job_number)) : "Diagnostics";
   el("view").innerHTML = `
-    <div class="breadcrumb"><a href="#diagnostics">Diagnostics</a> / ${esc(f.title)}</div>
+    <div class="breadcrumb"><a href="#${rback}">${rbackLabel}</a> / ${esc(f.title)}</div>
     <div class="page-head"><div><h1>${esc(f.title)}</h1>
       ${f.summary ? `<div class="page-sub">${esc(f.summary)}</div>` : ""}</div></div>
     <form id="run-form">
-      <div class="panel"><div class="field"><label>Link to job *</label>
-        <select id="run-job" required><option value="">— choose a job —</option>${jobOpts}</select></div></div>
+      <div class="panel">${rjobFixed
+        ? `<div class="run-job-fixed">Saving to <strong>${rjobLabel}</strong></div><input type="hidden" id="run-job" value="${presetJobId}">`
+        : `<div class="field"><label>Link to job *</label><select id="run-job" required><option value="">— choose a job —</option>${jobOpts}</select></div>`}</div>
       ${steps.map((s, si) => `
         <div class="panel">
           <div style="display:flex;gap:12px;align-items:flex-start">
@@ -1843,23 +1849,31 @@ function renderTreeRun() {
     </div>`;
   }
 
+  const job = (st.jobs || []).find(j => j.id === st.presetJobId);
+  const jobFixed = !!st.presetJobId;
+  const jobLabel = job ? esc(fmtJobNo(job.job_number)) + (job.customers ? " — " + esc(job.customers.name) : "") + (job.vehicles ? " (" + esc(job.vehicles.registration || "") + ")" : "") : "";
+  const backHref = jobFixed ? `jobs/${st.presetJobId}` : "diagnostics";
+  const backLabel = jobFixed && job ? esc(fmtJobNo(job.job_number)) : "Diagnostics";
   const jobOpts = (st.jobs || []).map(j => `<option value="${j.id}" ${j.id === st.presetJobId ? "selected" : ""}>${esc(fmtJobNo(j.job_number))}${j.customers ? " — " + esc(j.customers.name) : ""}${j.vehicles ? " (" + esc(j.vehicles.registration || "") + ")" : ""}</option>`).join("");
-  const jobSelect = `<select id="treerun-job" onchange="window._treeRun.presetJobId=this.value"><option value="">— choose a job —</option>${jobOpts}</select>`;
+  const jobPicker = `<div class="field"><label>Link to a job</label><select id="treerun-job" onchange="window._treeRun.presetJobId=this.value"><option value="">— choose a job —</option>${jobOpts}</select></div>`;
 
   el("view").innerHTML = `
-    <div class="breadcrumb"><a href="#diagnostics">Diagnostics</a> / ${esc(st.title)}</div>
+    <div class="breadcrumb"><a href="#${backHref}">${backLabel}</a> / ${esc(st.title)}</div>
     <div class="page-head"><div><h1>🌿 ${esc(st.title)}</h1>
-      ${st.runId ? `<div class="page-sub">💾 Saved to a job — your progress is being kept</div>` : ""}</div>
+      ${jobFixed ? `<div class="page-sub">${st.runId ? "💾 Progress saved to " : "Working on "}${jobLabel}</div>` : ""}</div>
       <div class="row-actions">${st.path.length ? `<button class="btn btn-sm" onclick="treeBack()">← Back</button>` : ""}<button class="btn btn-sm" onclick="treeRestart()">Restart</button></div></div>
     ${trail}
     ${body}
     ${done
-      ? `<div class="panel"><div class="field"><label>Save this result to a job</label>${jobSelect}</div>
+      ? `<div class="panel">
+          ${jobFixed ? `<div class="run-job-fixed">Saving to <strong>${jobLabel}</strong></div>` : jobPicker}
           <div class="form-actions">
             <button class="btn btn-ghost" onclick="treeRestart()">Run again</button>
-            <button class="btn btn-primary" onclick="treeSaveRun()">${st.runId ? "Finish & save" : "Save to job"}</button></div></div>`
+            <button class="btn btn-primary" onclick="treeSaveRun()">Save to job</button></div></div>`
       : `<div class="panel save-progress">
-          <div class="field"><label>Not finished? Save your progress to a job and pick it up later</label>${jobSelect}</div>
+          ${jobFixed
+            ? `<div class="run-save-hint">Not finished? Save now and resume from <strong>${jobLabel}</strong> whenever you like.</div>`
+            : `<div class="run-save-hint">Not finished? Link a job and save — pick it up from that job later.</div>${jobPicker}`}
           <div class="form-actions">
             <button class="btn" onclick="treeSaveProgress()">💾 ${st.runId ? "Update saved progress" : "Save & finish later"}</button></div></div>`}`;
 }
