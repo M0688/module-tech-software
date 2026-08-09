@@ -270,6 +270,43 @@ tbody tr:last-child td { border-bottom: none; }
 .step-move button { background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); border-radius: 5px; cursor: pointer; width: 24px; line-height: 18px; }
 .step-move button:hover { color: var(--text); }
 
+/* ---------- Decision trees ---------- */
+.cat-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.flow-kind { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 20px; }
+.flow-kind.tree { color: var(--green); background: #123021; }
+.flow-kind.check { color: var(--primary); background: var(--surface-2); }
+
+.tree-help { color: var(--text-dim); font-size: 13px; line-height: 1.5; background: var(--surface); border: 1px dashed var(--border); border-radius: 9px; padding: 12px 14px; margin-bottom: 14px; }
+
+.tree-node { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; }
+.tree-node-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.tree-node-badge { font-size: 11px; font-weight: 700; letter-spacing: .04em; color: var(--primary); background: var(--surface-2); padding: 3px 10px; border-radius: 20px; }
+.tree-q-title, .tree-q-detail, .tree-a-label, .tree-a-target, .tree-a-conclusion { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); padding: 9px 11px; border-radius: 7px; font-size: 14px; font-family: inherit; width: 100%; }
+.tree-q-title { font-weight: 600; margin-bottom: 8px; }
+.tree-q-detail { resize: vertical; min-height: 40px; font-size: 13px; margin-bottom: 12px; }
+.tree-answers { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+.tree-answer { border-left: 3px solid var(--border); padding-left: 12px; display: flex; flex-direction: column; gap: 6px; }
+.tree-answer-row { display: flex; gap: 8px; align-items: center; }
+.tree-a-label { flex: 1; }
+.tree-a-target { width: 250px; font-size: 13px; }
+.tree-a-conclusion { border-color: var(--green); }
+
+/* runner */
+.run-q-title { font-size: 19px; font-weight: 600; }
+.run-q-detail { color: var(--text-dim); font-size: 14px; margin-top: 8px; white-space: pre-wrap; line-height: 1.5; }
+.run-answers { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.run-answer { justify-content: space-between; text-align: left; padding: 14px 16px; font-size: 15px; }
+.run-answer:hover { border-color: var(--primary); }
+.run-answer-arrow { opacity: .6; margin-left: 12px; }
+
+.trail-step { padding: 7px 0; border-bottom: 1px solid var(--border); }
+.trail-step:last-child { border-bottom: none; }
+.trail-q { font-size: 13px; color: var(--text-dim); }
+.trail-a { font-size: 14px; font-weight: 600; margin-top: 1px; }
+
+.result-panel { border-color: var(--green); background: #0f2419; }
+.result-text { font-size: 18px; font-weight: 600; line-height: 1.4; }
+
 @media print {
   .sidebar, .page-head .row-actions, .no-print { display: none !important; }
   .app { grid-template-columns: 1fr; }

@@ -1358,39 +1358,62 @@ window.openFile = async (path) => {
 
 // Pick a template to run against a specific job (from the job page).
 window.pickDiagnostic = async (jobId) => {
-  const { data: flows } = await db.from("diagnostic_flows").select("id,title,category,steps").order("title");
+  const { data: flows } = await db.from("diagnostic_flows").select("id,title,category,kind,steps,tree").order("title");
   if (!flows || !flows.length) return toast("No templates yet — create one in Diagnostics", "error");
   openModal("Start a diagnostic", `<div style="display:flex;flex-direction:column;gap:8px">
-    ${flows.map(f => `<button type="button" class="btn" style="justify-content:flex-start;text-align:left" onclick="closeModalGlobal();location.hash='diagnostics/run/${f.id}/${jobId}'">
-      <div><div>${esc(f.title)}</div><div class="muted" style="font-size:12px">${(f.steps || []).length} steps${f.category ? " · " + esc(f.category) : ""}</div></div>
-    </button>`).join("")}
+    ${flows.map(f => {
+      const isTree = f.kind === "tree";
+      const count = isTree ? ((f.tree && f.tree.nodes) || []).length : (f.steps || []).length;
+      return `<button type="button" class="btn" style="justify-content:flex-start;text-align:left" onclick="closeModalGlobal();location.hash='diagnostics/run/${f.id}/${jobId}'">
+        <div><div>${isTree ? "🌿 " : "✓ "}${esc(f.title)}</div><div class="muted" style="font-size:12px">${count} ${isTree ? "question" : "step"}${count === 1 ? "" : "s"}${f.category ? " · " + esc(f.category) : ""}</div></div>
+      </button>`;
+    }).join("")}
   </div>`);
 };
 
+// Route edit/run to the right editor/runner depending on the flow's kind.
+async function dispatchFlow(id, mode, jobId) {
+  const { data: f } = await db.from("diagnostic_flows").select("kind").eq("id", id).single();
+  const isTree = f && f.kind === "tree";
+  if (mode === "edit") return isTree ? treeEditor(id) : flowEditor(id);
+  return isTree ? treeRun(id, jobId) : flowRunForm(id, jobId);
+}
+
 views.diagnostics = async (rest) => {
   if (rest[0] === "new") return flowEditor(null);
-  if (rest[0] === "edit") return flowEditor(rest[1]);
-  if (rest[0] === "run") return flowRunForm(rest[1], rest[2]);
+  if (rest[0] === "newtree") return treeEditor(null);
+  if (rest[0] === "edit") return dispatchFlow(rest[1], "edit");
+  if (rest[0] === "run") return dispatchFlow(rest[1], "run", rest[2]);
   if (rest[0] === "view") return flowRunView(rest[1]);
   const { data } = await db.from("diagnostic_flows").select("*").order("category").order("title");
   el("view").innerHTML = `
     <div class="page-head"><div><h1>Diagnostics</h1>
-      <div class="page-sub">Fill-in checklists that capture readings & photos against a job</div></div>
-      <button class="btn btn-primary" onclick="location.hash='diagnostics/new'">+ New template</button></div>
-    ${data.length ? `<div class="flow-grid">${data.map(f => `
-      <div class="flow-card">
+      <div class="page-sub">Checklists that capture readings & photos, or branching fault-finding trees — run either against a job</div></div>
+      <div class="row-actions">
+        <button class="btn" onclick="location.hash='diagnostics/new'">+ New checklist</button>
+        <button class="btn btn-primary" onclick="location.hash='diagnostics/newtree'">+ New decision tree</button>
+      </div></div>
+    ${data.length ? `<div class="flow-grid">${data.map(f => {
+      const isTree = f.kind === "tree";
+      const count = isTree ? ((f.tree && f.tree.nodes) || []).length : (f.steps || []).length;
+      const noun = isTree ? "question" : "step";
+      return `<div class="flow-card">
         <div onclick="location.hash='diagnostics/run/${f.id}'" style="cursor:pointer">
-          ${f.category ? `<div class="cat">${esc(f.category)}</div>` : ""}
+          <div class="cat-row">
+            <span class="flow-kind ${isTree ? "tree" : "check"}">${isTree ? "🌿 Decision tree" : "✓ Checklist"}</span>
+            ${f.category ? `<span class="cat">${esc(f.category)}</span>` : ""}
+          </div>
           <h3>${esc(f.title)}</h3>
           ${f.summary ? `<div class="muted" style="font-size:13px">${esc(f.summary)}</div>` : ""}
-          <div class="count">${(f.steps || []).length} step${(f.steps || []).length === 1 ? "" : "s"}</div>
+          <div class="count">${count} ${noun}${count === 1 ? "" : "s"}</div>
         </div>
         <div class="row-actions" style="margin-top:10px">
           <button class="btn btn-sm btn-primary" onclick="location.hash='diagnostics/run/${f.id}'">Start</button>
-          <button class="btn btn-sm" onclick="location.hash='diagnostics/edit/${f.id}'">Edit template</button>
+          <button class="btn btn-sm" onclick="location.hash='diagnostics/edit/${f.id}'">Edit</button>
         </div>
-      </div>`).join("")}</div>`
-    : `<div class="empty">No templates yet. Click "New template" to build your first one.</div>`}`;
+      </div>`;
+    }).join("")}</div>`
+    : `<div class="empty">Nothing yet. Build a <strong>checklist</strong> to capture readings, or a <strong>decision tree</strong> to walk a fault down to its cause.</div>`}`;
 };
 
 // Fill-in capture form: run a template against a job, capturing readings + photos.
@@ -1501,9 +1524,29 @@ async function flowRunForm(flowId, presetJobId) {
 async function flowRunView(runId) {
   const { data: run } = await db.from("diagnostic_runs").select("*, jobs(id,job_number)").eq("id", runId).single();
   if (!run) { el("view").innerHTML = `<div class="empty">Diagnostic not found.</div>`; return; }
+  const backJob = run.jobs ? `jobs/${run.jobs.id}` : "diagnostics";
+
+  // Decision-tree run: show the path walked + the result reached.
+  if (run.data && run.data.tree) {
+    const path = run.data.path || [];
+    el("view").innerHTML = `
+      <div class="breadcrumb"><a href="#${backJob}">${run.jobs ? fmtJobNo(run.jobs.job_number) : "Diagnostics"}</a> / ${esc(run.title || "Diagnostic")}</div>
+      <div class="page-head"><div><h1>🌿 ${esc(run.title || "Diagnostic")}</h1>
+        <div class="page-sub">Recorded ${fmtDate(run.created_at)}</div></div>
+        <div class="row-actions"><button class="btn btn-danger" onclick="deleteRow('diagnostic_runs','${run.id}','${backJob}')">Delete</button></div></div>
+      <div class="panel">
+        <div class="muted" style="font-size:12px;margin-bottom:8px">Path taken</div>
+        ${path.length ? path.map(p => `<div class="trail-step"><div class="trail-q">${esc(p.q)}</div><div class="trail-a">➜ ${esc(p.a)}</div></div>`).join("") : `<div class="muted">—</div>`}
+      </div>
+      <div class="panel result-panel">
+        <div class="muted" style="font-size:12px;margin-bottom:4px">Result</div>
+        <div class="result-text">${esc(run.data.conclusion || "—")}</div>
+      </div>`;
+    return;
+  }
+
   const steps = (run.data && run.data.steps) || [];
   const values = (run.data && run.data.values) || {};
-  const backJob = run.jobs ? `jobs/${run.jobs.id}` : "diagnostics";
   el("view").innerHTML = `
     <div class="breadcrumb"><a href="#${backJob}">${run.jobs ? fmtJobNo(run.jobs.job_number) : "Diagnostics"}</a> / ${esc(run.title || "Diagnostic")}</div>
     <div class="page-head"><div><h1>${esc(run.title || "Diagnostic")}</h1>
@@ -1631,6 +1674,200 @@ async function flowEditor(id) {
     location.hash = "diagnostics";
   });
 }
+
+/* ===========================================================
+   DECISION TREES — branching guided fault-finding
+   A tree is a list of question nodes. Each answer either jumps
+   to another question or ends the run with a result (the fault/fix).
+   The first question is the start.  Model held in window._tree.
+   =========================================================== */
+function newTreeNode() { return { id: "n" + Math.random().toString(36).slice(2, 8), title: "", detail: "", answers: [] }; }
+function newTreeAnswer() { return { label: "", next: "", conclusion: "" }; }
+
+async function treeEditor(id) {
+  let f = { title: "", category: "", summary: "", tree: { nodes: [] } };
+  if (id) f = (await db.from("diagnostic_flows").select("*").eq("id", id).single()).data || f;
+  window._tree = (f.tree && Array.isArray(f.tree.nodes) && f.tree.nodes.length)
+    ? f.tree.nodes.map(n => ({ answers: [], ...n }))
+    : [newTreeNode()];
+  el("view").innerHTML = `
+    <div class="breadcrumb"><a href="#diagnostics">Diagnostics</a> / ${id ? "Edit decision tree" : "New decision tree"}</div>
+    <div class="page-head"><h1>${id ? "Edit decision tree" : "New decision tree"}</h1></div>
+    <div class="panel"><div class="form-grid">
+      <div class="field"><label>Title *</label><input id="tree-title" value="${esc(f.title)}" placeholder="e.g. No-comms fault finding"></div>
+      <div class="field"><label>Category</label><input id="tree-cat" value="${esc(f.category)}" placeholder="e.g. Immobiliser, CAN, power supply"></div>
+      <div class="field full"><label>Summary</label><input id="tree-summary" value="${esc(f.summary)}" placeholder="One line — when to reach for this tree"></div>
+    </div></div>
+    <div class="tree-help">The <strong>first question is the start.</strong> For each answer, choose whether it jumps to another question or <strong>ends with a result</strong> (the fault or the fix). Answers that end become the diagnosis shown at the finish.</div>
+    <div id="tree-nodes"></div>
+    <button type="button" class="btn" onclick="treeAddNode()">+ Add question</button>
+    <div class="form-actions">
+      ${id ? `<button type="button" class="btn btn-danger" style="margin-right:auto" onclick="deleteRow('diagnostic_flows','${id}','diagnostics')">Delete tree</button>` : ""}
+      <button type="button" class="btn btn-ghost" onclick="location.hash='diagnostics'">Cancel</button>
+      <button type="button" class="btn btn-primary" onclick="treeSave('${id || ""}')">${id ? "Save tree" : "Create tree"}</button>
+    </div>`;
+  renderTreeNodes();
+}
+
+// Re-render node cards from the model. Only called on structural changes
+// (add/remove node or answer, changing an answer's destination) so typing
+// in a text box never loses focus.
+function renderTreeNodes() {
+  const nodes = window._tree;
+  el("tree-nodes").innerHTML = nodes.map((n, ni) => `
+    <div class="tree-node" data-nid="${n.id}">
+      <div class="tree-node-head">
+        <span class="tree-node-badge">${ni === 0 ? "START · Q1" : "Q" + (ni + 1)}</span>
+        <button type="button" class="li-del" title="Remove question" onclick="treeDelNode('${n.id}')">&times;</button>
+      </div>
+      <input class="tree-q-title" value="${esc(n.title)}" oninput="treeSet('${n.id}','title',this.value)" placeholder="Question / check — e.g. Battery voltage at pin 3?">
+      <textarea class="tree-q-detail" oninput="treeSet('${n.id}','detail',this.value)" placeholder="Instructions (optional) — how to measure or what to look for">${esc(n.detail)}</textarea>
+      <div class="tree-answers">
+        ${(n.answers || []).map((a, ai) => treeAnswerHtml(nodes, n, ai, a)).join("")}
+      </div>
+      <button type="button" class="btn btn-sm" onclick="treeAddAns('${n.id}')">+ Add answer</button>
+    </div>`).join("");
+}
+
+function treeAnswerHtml(nodes, n, ai, a) {
+  const targetOpts = nodes
+    .filter(m => m.id !== n.id)
+    .map(m => `<option value="${m.id}" ${a.next === m.id ? "selected" : ""}>➜ Go to Q${nodes.indexOf(m) + 1}${m.title ? ": " + esc(m.title.slice(0, 28)) : ""}</option>`)
+    .join("");
+  return `<div class="tree-answer">
+    <div class="tree-answer-row">
+      <input class="tree-a-label" value="${esc(a.label)}" oninput="treeSetAns('${n.id}',${ai},'label',this.value)" placeholder="Answer — e.g. No voltage / Below 1kΩ / Yes">
+      <select class="tree-a-target" onchange="treeSetAns('${n.id}',${ai},'next',this.value)">
+        <option value="" ${!a.next ? "selected" : ""}>🏁 End with a result…</option>
+        ${targetOpts}
+      </select>
+      <button type="button" class="li-del" title="Remove answer" onclick="treeDelAns('${n.id}',${ai})">&times;</button>
+    </div>
+    ${!a.next ? `<input class="tree-a-conclusion" value="${esc(a.conclusion)}" oninput="treeSetAns('${n.id}',${ai},'conclusion',this.value)" placeholder="Result / fault / fix — e.g. Blown ECU supply fuse — replace & re-test">` : ""}
+  </div>`;
+}
+
+window.treeSet = (id, key, val) => { const n = window._tree.find(x => x.id === id); if (n) n[key] = val; };
+window.treeSetAns = (id, ai, key, val) => {
+  const n = window._tree.find(x => x.id === id); if (!n || !n.answers[ai]) return;
+  n.answers[ai][key] = val;
+  if (key === "next") renderTreeNodes(); // toggles the result box on/off
+};
+window.treeAddNode = () => { window._tree.push(newTreeNode()); renderTreeNodes(); };
+window.treeDelNode = (id) => {
+  if (window._tree.length <= 1) return toast("A tree needs at least one question", "error");
+  window._tree = window._tree.filter(x => x.id !== id);
+  window._tree.forEach(n => (n.answers || []).forEach(a => { if (a.next === id) a.next = ""; }));
+  renderTreeNodes();
+};
+window.treeAddAns = (id) => { const n = window._tree.find(x => x.id === id); if (n) { (n.answers = n.answers || []).push(newTreeAnswer()); renderTreeNodes(); } };
+window.treeDelAns = (id, ai) => { const n = window._tree.find(x => x.id === id); if (n) { n.answers.splice(ai, 1); renderTreeNodes(); } };
+
+window.treeSave = async (id) => {
+  const title = el("tree-title").value.trim();
+  if (!title) return toast("Give the tree a title", "error");
+  const nodes = window._tree
+    .map(n => ({ id: n.id, title: n.title.trim(), detail: (n.detail || "").trim(),
+      answers: (n.answers || []).map(a => ({ label: a.label.trim(), next: a.next || "", conclusion: (a.conclusion || "").trim() })).filter(a => a.label) }))
+    .filter(n => n.title || n.answers.length);
+  if (!nodes.length) return toast("Add at least one question with an answer", "error");
+  const payload = {
+    title, category: el("tree-cat").value.trim() || null, summary: el("tree-summary").value.trim() || null,
+    kind: "tree", tree: { nodes }, steps: [],
+  };
+  const q = id ? db.from("diagnostic_flows").update(payload).eq("id", id) : db.from("diagnostic_flows").insert(payload);
+  const { error } = await q;
+  if (error) return toast(error.message, "error");
+  toast("Decision tree saved", "success");
+  location.hash = "diagnostics";
+};
+
+// ---- Runner: walk the tree, answer by answer, to a result ----
+async function treeRun(flowId, presetJobId) {
+  const [{ data: f }, { data: jobs }] = await Promise.all([
+    db.from("diagnostic_flows").select("*").eq("id", flowId).single(),
+    db.from("jobs").select("id,job_number,customers(name),vehicles(registration)").order("job_number", { ascending: false }),
+  ]);
+  if (!f) { el("view").innerHTML = `<div class="empty">Tree not found.</div>`; return; }
+  const nodes = (f.tree && f.tree.nodes) || [];
+  window._treeRun = { flowId, title: f.title, jobs: jobs || [], nodes, presetJobId, path: [], current: nodes[0] ? nodes[0].id : null, conclusion: null };
+  renderTreeRun();
+}
+
+function renderTreeRun() {
+  const st = window._treeRun;
+  const cur = st.nodes.find(n => n.id === st.current);
+  const done = st.conclusion != null;
+  const trail = st.path.length ? `<div class="panel"><div class="muted" style="font-size:12px;margin-bottom:8px">Path so far</div>
+    ${st.path.map(p => `<div class="trail-step"><div class="trail-q">${esc(p.q)}</div><div class="trail-a">➜ ${esc(p.a)}</div></div>`).join("")}</div>` : "";
+
+  let body;
+  if (done) {
+    body = `<div class="panel result-panel">
+      <div class="muted" style="font-size:12px;margin-bottom:4px">Result</div>
+      <div class="result-text">${esc(st.conclusion) || "—"}</div></div>`;
+  } else if (!cur) {
+    body = `<div class="empty">This tree has no questions yet. Edit it to add some.</div>`;
+  } else {
+    body = `<div class="panel">
+      <div class="run-q-title">${esc(cur.title) || "(untitled question)"}</div>
+      ${cur.detail ? `<div class="run-q-detail">${esc(cur.detail)}</div>` : ""}
+      <div class="run-answers">
+        ${(cur.answers || []).map((a, ai) => `<button type="button" class="btn run-answer" onclick="treeAnswer(${ai})">${esc(a.label) || "(answer)"}<span class="run-answer-arrow">${a.next ? "➜" : "🏁"}</span></button>`).join("")}
+      </div>
+      ${!(cur.answers || []).length ? `<div class="muted" style="margin-top:8px">No answers set for this question — edit the tree to add some.</div>` : ""}
+    </div>`;
+  }
+
+  const jobOpts = (st.jobs || []).map(j => `<option value="${j.id}" ${j.id === st.presetJobId ? "selected" : ""}>${esc(fmtJobNo(j.job_number))}${j.customers ? " — " + esc(j.customers.name) : ""}${j.vehicles ? " (" + esc(j.vehicles.registration || "") + ")" : ""}</option>`).join("");
+
+  el("view").innerHTML = `
+    <div class="breadcrumb"><a href="#diagnostics">Diagnostics</a> / ${esc(st.title)}</div>
+    <div class="page-head"><div><h1>🌿 ${esc(st.title)}</h1></div>
+      <div class="row-actions">${st.path.length ? `<button class="btn btn-sm" onclick="treeBack()">← Back</button>` : ""}<button class="btn btn-sm" onclick="treeRestart()">Restart</button></div></div>
+    ${trail}
+    ${body}
+    ${done ? `<div class="panel"><div class="field"><label>Save this result to a job</label>
+      <select id="treerun-job"><option value="">— choose a job —</option>${jobOpts}</select></div>
+      <div class="form-actions">
+        <button class="btn btn-ghost" onclick="treeRestart()">Run again</button>
+        <button class="btn btn-primary" onclick="treeSaveRun()">Save to job</button></div></div>` : ""}`;
+}
+
+window.treeAnswer = (ai) => {
+  const st = window._treeRun;
+  const cur = st.nodes.find(n => n.id === st.current);
+  const a = cur.answers[ai];
+  st.path.push({ q: cur.title, a: a.label, from: cur.id });
+  if (a.next && st.nodes.some(n => n.id === a.next)) { st.current = a.next; st.conclusion = null; }
+  else { st.conclusion = a.conclusion || "(no result was set for this answer)"; }
+  renderTreeRun();
+};
+window.treeBack = () => {
+  const st = window._treeRun;
+  const last = st.path.pop();
+  if (!last) return;
+  st.current = last.from;
+  st.conclusion = null;
+  renderTreeRun();
+};
+window.treeRestart = () => {
+  const st = window._treeRun;
+  st.path = []; st.conclusion = null; st.current = st.nodes[0] ? st.nodes[0].id : null;
+  renderTreeRun();
+};
+window.treeSaveRun = async () => {
+  const st = window._treeRun;
+  const jobId = el("treerun-job").value;
+  if (!jobId) return toast("Choose a job to save this against", "error");
+  const { error } = await db.from("diagnostic_runs").insert({
+    flow_id: st.flowId, job_id: jobId, title: st.title,
+    data: { tree: true, path: st.path.map(p => ({ q: p.q, a: p.a })), conclusion: st.conclusion },
+  });
+  if (error) return toast(error.message, "error");
+  toast("Saved to job", "success");
+  location.hash = "jobs/" + jobId;
+};
 
 /* ===========================================================
    REPORTS
