@@ -751,23 +751,6 @@ window.toggleChk = async (i, field) => {
   if (error) toast(error.message, "error");
 };
 
-/* ---------- print a vehicle label (reg + make/model) ---------- */
-// Sized for a Brother QL-700 62mm continuous roll (DK-22205), 3mm margin.
-window.printLabel = (make, model, reg) => {
-  const veh = [make, model].filter(Boolean).join(" ");
-  el("print-label").innerHTML = `<div class="pl-reg">${esc(reg || "")}</div>${veh ? `<div class="pl-veh">${esc(veh)}</div>` : ""}`;
-  let st = document.getElementById("label-page-style");
-  if (!st) { st = document.createElement("style"); st.id = "label-page-style"; document.head.appendChild(st); }
-  st.textContent = "@page { size: 62mm 29mm; margin: 0; }";
-  document.body.classList.add("printing-label");
-  window.print();
-};
-window.addEventListener("afterprint", () => {
-  document.body.classList.remove("printing-label");
-  const st = document.getElementById("label-page-style");
-  if (st) st.textContent = "";  // clear so it doesn't affect invoice printing
-});
-
 /* ---------- "had to buy a file" cost ---------- */
 const FILE_COST = 50;
 window.toggleFilePurchased = async (jobId, checked) => {
@@ -816,10 +799,7 @@ async function jobDetail(id) {
       </div>
       <div class="panel">
         <div class="page-head" style="margin-bottom:10px"><h3 style="margin:0">Vehicle</h3>
-          <div class="row-actions">
-            ${v ? `<button class="btn btn-sm" onclick="printLabel('${esc(v.make || "")}','${esc(v.model || "")}','${esc(v.registration || "")}')">🖨 Label</button>` : ""}
-            <button class="btn btn-sm" onclick="${v ? `vehicleForm('${v.id}')` : `jobForm('${j.id}')`}">${v ? "Edit" : "Add"}</button>
-          </div></div>
+          <button class="btn btn-sm" onclick="${v ? `vehicleForm('${v.id}')` : `jobForm('${j.id}')`}">${v ? "Edit" : "Add"}</button></div>
         ${v ? `<div><strong>${esc(`${v.make || ""} ${v.model || ""}`) || "Vehicle"}</strong> <span class="chip">${esc(v.registration || "—")}</span></div>
           <div class="muted" style="margin-top:6px">${[v.year ? `Year ${v.year}` : "", v.engine ? esc(v.engine) : "", v.ecu_type ? `ECU ${esc(v.ecu_type)}` : "", v.gearbox ? `Gearbox ${esc(v.gearbox)}` : ""].filter(Boolean).join(" · ")}</div>
           ${v.vin ? `<div class="muted" style="margin-top:4px">VIN: ${esc(v.vin)}</div>` : ""}`
@@ -1414,6 +1394,20 @@ views.diagnostics = async (rest) => {
 };
 
 // Fill-in capture form: run a template against a job, capturing readings + photos.
+// Live pass/fail for a measured value against its good range.
+window.evalMeas = (input) => {
+  const flag = input.parentElement.querySelector(".meas-flag");
+  if (!flag) return;
+  const v = input.value.trim();
+  if (v === "") { flag.textContent = ""; flag.className = "meas-flag"; return; }
+  const num = Number(v);
+  const min = input.dataset.min !== "" ? Number(input.dataset.min) : null;
+  const max = input.dataset.max !== "" ? Number(input.dataset.max) : null;
+  const pass = (min == null || num >= min) && (max == null || num <= max);
+  flag.textContent = pass ? "✓" : "✗";
+  flag.className = "meas-flag " + (pass ? "pass" : "fail");
+};
+
 async function flowRunForm(flowId, presetJobId) {
   const [{ data: f }, { data: jobs }] = await Promise.all([
     db.from("diagnostic_flows").select("*").eq("id", flowId).single(),
@@ -1427,7 +1421,13 @@ async function flowRunForm(flowId, presetJobId) {
     const id = `f_${si}_${fi}`;
     if (field.type === "photo") return `<input id="${id}" type="file" accept="image/*,application/pdf">`;
     if (field.type === "textarea") return `<textarea id="${id}"></textarea>`;
-    if (field.type === "number") return `<input id="${id}" type="number" step="any">`;
+    if (field.type === "number") {
+      const hasRange = field.min != null || field.max != null;
+      if (!hasRange) return `<input id="${id}" type="number" step="any">`;
+      const rangeTxt = [field.min != null ? "≥ " + field.min : "", field.max != null ? "≤ " + field.max : ""].filter(Boolean).join(" and ");
+      return `<div class="meas"><input id="${id}" type="number" step="any" data-min="${field.min ?? ""}" data-max="${field.max ?? ""}" oninput="evalMeas(this)"><span class="meas-flag"></span></div>
+        <div class="meas-range muted">Good: ${esc(rangeTxt)}</div>`;
+    }
     return `<input id="${id}" type="text">`;
   };
 
@@ -1515,6 +1515,11 @@ async function flowRunView(runId) {
         if (v == null) return "";
         if (field.type === "photo" && v.photo) return `<div class="field full"><label>${esc(field.label)}</label>
           <img class="diag-photo" data-path="${esc(v.photo)}" alt="${esc(field.label)}" onclick="openFile('${esc(v.photo)}')" title="Click to open"></div>`;
+        if (field.type === "number" && (field.min != null || field.max != null) && typeof v === "string") {
+          const num = Number(v);
+          const pass = (field.min == null || num >= field.min) && (field.max == null || num <= field.max);
+          return `<div class="field"><label>${esc(field.label)}</label><div class="ro-val">${esc(v)} <span class="meas-flag ${pass ? "pass" : "fail"}">${pass ? "✓" : "✗"}</span></div></div>`;
+        }
         return `<div class="field ${field.type === "textarea" ? "full" : ""}"><label>${esc(field.label)}</label><div class="ro-val">${esc(typeof v === "string" ? v : "")}</div></div>`;
       }).join("");
       const note = values[`s${si}note`];
@@ -1534,8 +1539,10 @@ async function flowRunView(runId) {
 function fieldRowHtml(field = {}) {
   const opts = FIELD_TYPES.map(([v, l]) => `<option value="${v}" ${v === field.type ? "selected" : ""}>${l}</option>`).join("");
   return `<div class="se-field-row">
-    <input class="sef-label" placeholder="Input label (e.g. Part number)" value="${esc(field.label)}">
+    <input class="sef-label" placeholder="Input label (e.g. Resistance PWR–GND)" value="${esc(field.label)}">
     <select class="sef-type">${opts}</select>
+    <input class="sef-min" type="number" step="any" placeholder="good ≥" value="${field.min ?? ""}" title="Number fields only: lowest acceptable (good) reading">
+    <input class="sef-max" type="number" step="any" placeholder="good ≤" value="${field.max ?? ""}" title="Number fields only: highest acceptable (good) reading">
     <button type="button" class="li-del" onclick="this.closest('.se-field-row').remove()">&times;</button>
   </div>`;
 }
@@ -1596,10 +1603,15 @@ async function flowEditor(id) {
     e.preventDefault();
     const f2 = e.target;
     const stepsOut = [...document.querySelectorAll("#steps-body .step-edit-row")].map(r => {
-      const fields = [...r.querySelectorAll(".se-field-row")].map(fr => ({
-        label: fr.querySelector(".sef-label").value.trim(),
-        type: fr.querySelector(".sef-type").value,
-      })).filter(x => x.label);
+      const fields = [...r.querySelectorAll(".se-field-row")].map(fr => {
+        const type = fr.querySelector(".sef-type").value;
+        const o = { label: fr.querySelector(".sef-label").value.trim(), type };
+        const min = fr.querySelector(".sef-min").value.trim();
+        const max = fr.querySelector(".sef-max").value.trim();
+        if (type === "number" && min !== "") o.min = Number(min);
+        if (type === "number" && max !== "") o.max = Number(max);
+        return o;
+      }).filter(x => x.label);
       return { title: r.querySelector(".se-title").value.trim(), detail: r.querySelector(".se-detail").value.trim(), fields };
     }).filter(s => s.title || s.detail || s.fields.length);
     const payload = {
