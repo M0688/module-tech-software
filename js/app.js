@@ -1267,12 +1267,13 @@ async function invoiceEditor(id, jobId) {
 
 async function invoiceView(id) {
   const [{ data: inv }, { data: settings }] = await Promise.all([
-    db.from("invoices").select("*, customers(name,company,address,phone,email)").eq("id", id).single(),
+    db.from("invoices").select("*, customers(name,company,address,phone,email), jobs(vehicles(registration))").eq("id", id).single(),
     db.from("business_settings").select("*").eq("id", true).single(),
   ]);
   if (!inv) { el("view").innerHTML = `<div class="empty">Invoice not found.</div>`; return; }
   const { data: items } = await db.from("invoice_items").select("*").eq("invoice_id", id).order("id");
   const c = inv.customers || {};
+  const ref = inv.jobs && inv.jobs.vehicles ? inv.jobs.vehicles.registration : "";
   const s = settings || {};
   const bizLine = (x) => x ? `<div>${esc(x)}</div>` : "";
 
@@ -1298,6 +1299,7 @@ async function invoiceView(id) {
         <div class="inv-meta">
           <div class="inv-title">Invoice</div>
           <div><strong>${esc(inv.invoice_number) || ""}</strong></div>
+          ${ref ? `<div>Ref#: ${esc(ref)}</div>` : ""}
           <div>Issued: ${fmtDate(inv.issue_date)}</div>
           ${inv.due_date ? `<div>Due: ${fmtDate(inv.due_date)}</div>` : ""}
         </div>
