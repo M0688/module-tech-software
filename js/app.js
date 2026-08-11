@@ -1147,12 +1147,20 @@ window.invAddJobLine = (sel) => {
   sel.value = "";
   invRecalc();
 };
+window.invAddPresetLine = (sel) => {
+  const o = sel.selectedOptions[0];
+  if (!o.value) return;
+  el("li-body").insertAdjacentHTML("beforeend", invRowHtml({ description: o.dataset.title, quantity: 1, unit_price: o.dataset.price || 0 }));
+  sel.value = "";
+  invRecalc();
+};
 
 async function invoiceEditor(id, jobId) {
-  const [{ data: settings }, { data: customers }, { data: jobs }] = await Promise.all([
+  const [{ data: settings }, { data: customers }, { data: jobs }, { data: presets }] = await Promise.all([
     db.from("business_settings").select("*").eq("id", true).single(),
     db.from("customers").select("id,name").order("name"),
     db.from("jobs").select("id,job_number,job_type,description,price,customer_id").order("created_at", { ascending: false }),
+    db.from("invoice_presets").select("*").order("sort").order("created_at"),
   ]);
   let inv = { status: "draft", issue_date: new Date().toISOString().slice(0, 10), tax_rate: settings?.default_tax_rate ?? 0 };
   let items = [];
@@ -1178,6 +1186,7 @@ async function invoiceEditor(id, jobId) {
   const jobLineDesc = (j) => j.description || JOB_TYPES[j.job_type] || j.job_type || fmtJobNo(j.job_number);
   const jobOpts = jobs.map(j => `<option value="${j.id}" data-title="${esc(jobLineDesc(j))}" data-price="${j.price ?? 0}" data-cust="${j.customer_id || ""}">${esc(fmtJobNo(j.job_number))}${j.job_type ? " — " + esc(JOB_TYPES[j.job_type] || j.job_type) : ""}${j.price != null ? " (" + fmtMoney(j.price) + ")" : ""}</option>`).join("");
   const statusOpts = INV_STATUS.map(s => `<option value="${s}" ${s === inv.status ? "selected" : ""}>${s}</option>`).join("");
+  const presetOpts = (presets || []).map(p => `<option value="${p.id}" data-title="${esc(p.description)}" data-price="${p.unit_price ?? 0}">${esc(p.description)}${p.unit_price != null ? " (" + fmtMoney(p.unit_price) + ")" : ""}</option>`).join("");
 
   el("view").innerHTML = `
     <div class="breadcrumb"><a href="#${curJobId ? `jobs/${curJobId}` : "jobs"}">${curJobId ? "Job" : "Jobs"}</a> / ${id ? esc(inv.invoice_number) : "New invoice"}</div>
@@ -1191,6 +1200,7 @@ async function invoiceEditor(id, jobId) {
           <div class="field"><label>Due date</label><input type="date" name="due_date" value="${inv.due_date || ""}"></div>
           <div class="field"><label>Status</label><select name="status">${statusOpts}</select></div>
           <div class="field"><label>Add line from job</label><select onchange="invAddJobLine(this)"><option value="">Pick a job…</option>${jobOpts}</select></div>
+          <div class="field"><label>Add saved item</label><select onchange="invAddPresetLine(this)"><option value="">${(presets || []).length ? "Pick an item…" : "No saved items — add in Settings"}</option>${presetOpts}</select></div>
         </div>
       </div>
 
@@ -1340,8 +1350,32 @@ window.invSetStatus = async (id, status) => {
 };
 
 /* ===================== SETTINGS ===================== */
+function presetRowHtml(p = {}) {
+  return `<tr>
+    <td><input class="pr-desc" value="${esc(p.description)}" placeholder="e.g. PCB Inspection & Testing"></td>
+    <td class="col-price"><input class="pr-price" type="number" step="any" value="${p.unit_price ?? 0}"></td>
+    <td class="col-x"><button type="button" class="li-del" onclick="this.closest('tr').remove()">&times;</button></td></tr>`;
+}
+window.presetAddRow = () => { el("preset-body").insertAdjacentHTML("beforeend", presetRowHtml()); };
+window.savePresets = async () => {
+  const rows = [...document.querySelectorAll("#preset-body tr")].map((tr, i) => ({
+    description: tr.querySelector(".pr-desc").value.trim(),
+    unit_price: parseFloat(tr.querySelector(".pr-price").value) || 0,
+    sort: i,
+  })).filter(r => r.description);
+  await db.from("invoice_presets").delete().not("id", "is", null);
+  if (rows.length) {
+    const { error } = await db.from("invoice_presets").insert(rows);
+    if (error) return toast(error.message, "error");
+  }
+  toast("Price list saved", "success");
+};
+
 views.settings = async () => {
-  const { data: s } = await db.from("business_settings").select("*").eq("id", true).single();
+  const [{ data: s }, { data: presets }] = await Promise.all([
+    db.from("business_settings").select("*").eq("id", true).single(),
+    db.from("invoice_presets").select("*").order("sort").order("created_at"),
+  ]);
   el("view").innerHTML = `
     <div class="page-head"><div><h1>Settings</h1>
       <div class="page-sub">Your business details — these appear on invoices.</div></div></div>
@@ -1357,6 +1391,18 @@ views.settings = async () => {
     </div>
     <div class="form-actions"><button type="submit" class="btn btn-primary">Save settings</button></div>
     </div></form>
+    <div class="panel">
+      <h3>Saved invoice items (price list)</h3>
+      <div class="muted" style="font-size:13px;margin-bottom:12px">Pre-made lines you can drop onto any invoice from the <strong>Add saved item</strong> menu. Set a description and a default price — you can still tweak them per invoice.</div>
+      <table class="line-items">
+        <thead><tr><th>Description</th><th class="col-price">Unit £</th><th class="col-x"></th></tr></thead>
+        <tbody id="preset-body">${(presets || []).map(presetRowHtml).join("")}</tbody>
+      </table>
+      <div class="form-actions" style="justify-content:flex-start;gap:10px;margin-top:12px">
+        <button type="button" class="btn btn-sm" onclick="presetAddRow()">+ Add item</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="savePresets()">Save price list</button>
+      </div>
+    </div>
     <div class="panel">
       <h3>Folder scanning</h3>
       <div class="muted" style="font-size:13px;margin-bottom:12px">Choose your files folder (the one that holds your year/reg folders). The <strong>Scan folder</strong> button on each job then pulls in that reg's files. Chrome or Edge on a computer only.</div>
