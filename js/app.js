@@ -759,6 +759,13 @@ window.toggleFilePurchased = async (jobId, checked) => {
   toast(checked ? `File cost added (£${FILE_COST})` : "File cost removed", "success");
 };
 
+window.saveWarrantySticker = async (jobId, val) => {
+  const v = (val || "").trim() || null;
+  const { error } = await db.from("jobs").update({ warranty_sticker_id: v }).eq("id", jobId);
+  if (error) return toast(error.message, "error");
+  toast(v ? "Warranty sticker ID saved" : "Warranty sticker ID cleared", "success");
+};
+
 async function jobDetail(id) {
   const { data: j } = await db.from("jobs").select("*, vehicles(*), customers(*)").eq("id", id).single();
   if (!j) { el("view").innerHTML = `<div class="empty">Job not found.</div>`; return; }
@@ -782,10 +789,17 @@ async function jobDetail(id) {
         <button class="btn btn-danger" onclick="deleteJob('${j.id}')">Delete</button>
       </div></div>
 
-    <label style="display:inline-flex;align-items:center;gap:9px;margin-bottom:18px;cursor:pointer;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 14px">
-      <input type="checkbox" style="width:18px;height:18px;accent-color:var(--primary);cursor:pointer" ${j.file_purchased ? "checked" : ""} onchange="toggleFilePurchased('${j.id}', this.checked)">
-      <span>Had to buy a file <span class="muted">(£${FILE_COST} cost)</span></span>
-    </label>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:18px">
+      <label style="display:inline-flex;align-items:center;gap:9px;cursor:pointer;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 14px">
+        <input type="checkbox" style="width:18px;height:18px;accent-color:var(--primary);cursor:pointer" ${j.file_purchased ? "checked" : ""} onchange="toggleFilePurchased('${j.id}', this.checked)">
+        <span>Had to buy a file <span class="muted">(£${FILE_COST} cost)</span></span>
+      </label>
+      <label style="display:inline-flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:6px 14px">
+        <span style="white-space:nowrap">Warranty sticker ID</span>
+        <input value="${esc(j.warranty_sticker_id)}" placeholder="e.g. WS-12345" onchange="saveWarrantySticker('${j.id}', this.value)"
+          style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:7px;min-width:140px">
+      </label>
+    </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
       <div class="panel">
@@ -935,7 +949,7 @@ window.jobForm = async (id) => {
         <div class="field"><label>Status</label><select name="status">${statusOpts}</select></div>
         <div class="field full"><label>Vehicle</label><select name="vehicle_id" id="job-vehicle"><option value="">—</option>${vOpts}</select></div>
         <div class="field"><label>Price (£)</label><input name="price" data-type="number" value="${j.price ?? ""}"></div>
-        <div class="field"></div>
+        <div class="field"><label>Warranty sticker ID</label><input name="warranty_sticker_id" value="${esc(j.warranty_sticker_id)}"></div>
         <div class="field full"><label>Description</label><textarea name="description">${esc(j.description)}</textarea></div>
       </div>
       <div class="form-actions">
