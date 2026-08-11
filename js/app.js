@@ -1239,6 +1239,8 @@ async function invoiceEditor(id, jobId) {
       const { data, error } = await db.from("invoices").insert(payload).select("id").single();
       if (error) return toast(error.message, "error");
       invId = data.id;
+      // Invoicing a job moves it to the "invoiced" status.
+      if (curJobId) await db.from("jobs").update({ status: "invoiced" }).eq("id", curJobId);
     }
     if (rows.length) {
       const { error } = await db.from("invoice_items").insert(rows.map(r => ({ ...r, invoice_id: invId })));
@@ -1289,8 +1291,8 @@ async function invoiceView(id) {
 
       <div class="inv-parties">
         <div><div class="label">Bill to</div>
-          <div><strong>${esc(c.name) || "—"}</strong></div>
-          ${bizLine(c.company)}${bizLine(c.address)}${bizLine(c.phone)}${bizLine(c.email)}
+          <div><strong>${c.company ? esc(c.company) : (esc(c.name) || "—")}</strong></div>
+          ${bizLine(c.address)}${bizLine(c.phone)}${bizLine(c.email)}
         </div>
       </div>
 
