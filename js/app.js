@@ -766,6 +766,24 @@ window.saveWarrantySticker = async (jobId, val) => {
   toast(v ? "Warranty sticker ID saved" : "Warranty sticker ID cleared", "success");
 };
 
+// Inline auto-save for a single field. The element carries data-tbl / data-id /
+// data-field (+ optional data-num). Saves on change (blur) and flashes green.
+window.onInlineChange = async (node) => {
+  const d = node.dataset;
+  let v;
+  if (node.type === "checkbox") v = node.checked;
+  else { v = node.value.trim(); if (v === "") v = null; else if (d.num) v = Number(v); }
+  const { error } = await db.from(d.tbl).update({ [d.field]: v }).eq("id", d.id);
+  if (error) return toast(error.message, "error");
+  node.classList.add("saved-flash");
+  setTimeout(() => node.classList.remove("saved-flash"), 900);
+  // keep the header status badge in sync
+  if (d.tbl === "jobs" && d.field === "status" && v) {
+    const b = document.getElementById("job-badge");
+    if (b) { b.className = "badge badge-" + v; b.textContent = String(v).replace("_", " "); }
+  }
+};
+
 async function jobDetail(id) {
   const { data: j } = await db.from("jobs").select("*, vehicles(*), customers(*)").eq("id", id).single();
   if (!j) { el("view").innerHTML = `<div class="empty">Job not found.</div>`; return; }
@@ -779,49 +797,48 @@ async function jobDetail(id) {
     db.from("invoices").select("*").eq("job_id", id).order("created_at", { ascending: false }),
     db.from("diagnostic_runs").select("id,title,created_at,data").eq("job_id", id).order("created_at", { ascending: false }),
   ]);
+  const typeOpts = Object.entries(JOB_TYPES).map(([k, label]) => `<option value="${k}" ${k === j.job_type ? "selected" : ""}>${label}</option>`).join("");
+  const statusOpts = JOB_STATUS.map(s => `<option value="${s}" ${s === j.status ? "selected" : ""}>${s.replace("_", " ")}</option>`).join("");
   el("view").innerHTML = `
     <div class="breadcrumb"><a href="#jobs">Jobs</a> / ${fmtJobNo(j.job_number)}</div>
     <div class="page-head"><div>
-      <h1>${fmtJobNo(j.job_number)} <span class="badge badge-${j.status}">${esc(j.status.replace("_", " "))}</span></h1>
-      <div class="page-sub">${esc(JOB_TYPES[j.job_type] || j.job_type || "")} · ${fmtMoney(j.price)}</div></div>
+      <h1>${fmtJobNo(j.job_number)} <span class="badge badge-${j.status}" id="job-badge">${esc(j.status.replace("_", " "))}</span></h1></div>
       <div class="row-actions">
-        <button class="btn" onclick="jobForm('${j.id}')">Edit job</button>
+        <button class="btn" onclick="jobForm('${j.id}')">Change vehicle</button>
         <button class="btn btn-danger" onclick="deleteJob('${j.id}')">Delete</button>
       </div></div>
 
-    <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:18px">
-      <label style="display:inline-flex;align-items:center;gap:9px;cursor:pointer;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 14px">
-        <input type="checkbox" style="width:18px;height:18px;accent-color:var(--primary);cursor:pointer" ${j.file_purchased ? "checked" : ""} onchange="toggleFilePurchased('${j.id}', this.checked)">
-        <span>Had to buy a file <span class="muted">(£${FILE_COST} cost)</span></span>
-      </label>
-      <label style="display:inline-flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:6px 14px">
-        <span style="white-space:nowrap">Warranty sticker ID</span>
-        <input value="${esc(j.warranty_sticker_id)}" placeholder="e.g. WS-12345" onchange="saveWarrantySticker('${j.id}', this.value)"
-          style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:7px;min-width:140px">
-      </label>
-    </div>
-
     <div class="panel jd-details">
-      <div class="jd-grid">
-        <div>
-          <div class="jd-col-head"><h3>Customer</h3>
-            <button class="btn btn-sm" onclick="${c ? `customerForm('${c.id}')` : `linkCustomerToJob('${j.id}', ${v ? `'${v.id}'` : "null"})`}">${c ? "Edit" : "Add"}</button></div>
-          ${c ? `<div><strong>${esc(c.name)}</strong></div>
-            ${c.company ? `<div class="muted">${esc(c.company)}</div>` : ""}
-            <div style="margin-top:6px">${c.phone ? `Tel: ${esc(c.phone)}` : ""}${c.phone && c.email ? " · " : ""}${c.email ? esc(c.email) : ""}</div>
-            ${c.address ? `<div class="muted" style="margin-top:4px">${esc(c.address)}</div>` : ""}`
-          : `<div class="muted">No customer linked.</div>`}
-        </div>
-        <div>
-          <div class="jd-col-head"><h3>Vehicle</h3>
-            <button class="btn btn-sm" onclick="${v ? `vehicleForm('${v.id}')` : `jobForm('${j.id}')`}">${v ? "Edit" : "Add"}</button></div>
-          ${v ? `<div><strong>${esc(`${v.make || ""} ${v.model || ""}`) || "Vehicle"}</strong> <span class="chip">${esc(v.registration || "—")}</span></div>
-            <div class="muted" style="margin-top:6px">${[v.year ? `Year ${v.year}` : "", v.engine ? esc(v.engine) : "", v.ecu_type ? `ECU ${esc(v.ecu_type)}` : "", v.gearbox ? `Gearbox ${esc(v.gearbox)}` : ""].filter(Boolean).join(" · ")}</div>
-            ${v.vin ? `<div class="muted" style="margin-top:4px">VIN: ${esc(v.vin)}</div>` : ""}`
-          : `<div class="muted">No vehicle linked.</div>`}
-        </div>
+      <div class="jd-form">
+        <div class="jd-subhead">Customer${c ? "" : ` <button class="btn btn-sm" style="margin-left:8px" onclick="linkCustomerToJob('${j.id}', ${v ? `'${v.id}'` : "null"})">Link customer</button>`}</div>
+        ${c ? `
+          <div class="fld wide"><label>Name</label><input value="${esc(c.name)}" data-tbl="customers" data-id="${c.id}" data-field="name" onchange="onInlineChange(this)"></div>
+          <div class="fld"><label>Company</label><input value="${esc(c.company)}" data-tbl="customers" data-id="${c.id}" data-field="company" onchange="onInlineChange(this)"></div>
+          <div class="fld"><label>Phone</label><input value="${esc(c.phone)}" data-tbl="customers" data-id="${c.id}" data-field="phone" onchange="onInlineChange(this)"></div>
+          <div class="fld"><label>Email</label><input value="${esc(c.email)}" data-tbl="customers" data-id="${c.id}" data-field="email" onchange="onInlineChange(this)"></div>
+          <div class="fld wide"><label>Address</label><input value="${esc(c.address)}" data-tbl="customers" data-id="${c.id}" data-field="address" onchange="onInlineChange(this)"></div>
+        ` : `<div class="fld wide muted">No customer linked yet.</div>`}
+
+        <div class="jd-subhead">Vehicle${v ? "" : ` <button class="btn btn-sm" style="margin-left:8px" onclick="jobForm('${j.id}')">Add vehicle</button>`}</div>
+        ${v ? `
+          <div class="fld"><label>Registration</label><input value="${esc(v.registration)}" data-tbl="vehicles" data-id="${v.id}" data-field="registration" onchange="onInlineChange(this)"></div>
+          <div class="fld"><label>Year</label><input type="number" value="${v.year ?? ""}" data-tbl="vehicles" data-id="${v.id}" data-field="year" data-num="1" onchange="onInlineChange(this)"></div>
+          <div class="fld"><label>Make</label><input value="${esc(v.make)}" data-tbl="vehicles" data-id="${v.id}" data-field="make" onchange="onInlineChange(this)"></div>
+          <div class="fld"><label>Model</label><input value="${esc(v.model)}" data-tbl="vehicles" data-id="${v.id}" data-field="model" onchange="onInlineChange(this)"></div>
+          <div class="fld"><label>Engine</label><input value="${esc(v.engine)}" data-tbl="vehicles" data-id="${v.id}" data-field="engine" onchange="onInlineChange(this)"></div>
+          <div class="fld"><label>Gearbox</label><input value="${esc(v.gearbox)}" data-tbl="vehicles" data-id="${v.id}" data-field="gearbox" onchange="onInlineChange(this)"></div>
+          <div class="fld wide"><label>ECU</label><input value="${esc(v.ecu_type)}" data-tbl="vehicles" data-id="${v.id}" data-field="ecu_type" onchange="onInlineChange(this)"></div>
+          <div class="fld wide"><label>VIN</label><input value="${esc(v.vin)}" data-tbl="vehicles" data-id="${v.id}" data-field="vin" onchange="onInlineChange(this)"></div>
+        ` : `<div class="fld wide muted">No vehicle linked yet.</div>`}
+
+        <div class="jd-subhead">Job</div>
+        <div class="fld"><label>Type</label><select data-tbl="jobs" data-id="${j.id}" data-field="job_type" onchange="onInlineChange(this)"><option value="">—</option>${typeOpts}</select></div>
+        <div class="fld"><label>Status</label><select data-tbl="jobs" data-id="${j.id}" data-field="status" onchange="onInlineChange(this)">${statusOpts}</select></div>
+        <div class="fld"><label>Price (£)</label><input type="number" step="any" value="${j.price ?? ""}" data-tbl="jobs" data-id="${j.id}" data-field="price" data-num="1" onchange="onInlineChange(this)"></div>
+        <div class="fld"><label>Warranty sticker ID</label><input value="${esc(j.warranty_sticker_id)}" placeholder="e.g. WS-12345" data-tbl="jobs" data-id="${j.id}" data-field="warranty_sticker_id" onchange="onInlineChange(this)"></div>
+        <div class="fld wide"><label>Notes</label><textarea data-tbl="jobs" data-id="${j.id}" data-field="description" onchange="onInlineChange(this)">${esc(j.description)}</textarea></div>
+        <div class="fld wide"><label class="jd-check"><input type="checkbox" ${j.file_purchased ? "checked" : ""} data-tbl="jobs" data-id="${j.id}" data-field="file_purchased" onchange="onInlineChange(this)"> Had to buy a file <span class="muted">(£${FILE_COST} cost)</span></label></div>
       </div>
-      ${j.description ? `<div class="jd-notes"><h3>Notes</h3><p class="muted" style="white-space:pre-wrap;margin:0">${esc(j.description)}</p></div>` : ""}
     </div>
 
     <details class="jd-section">

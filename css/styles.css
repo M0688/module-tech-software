@@ -315,6 +315,21 @@ tbody tr:last-child td { border-bottom: none; }
 .jd-notes { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
 .jd-notes h3 { margin: 0 0 6px; font-size: 15px; }
 
+/* Inline-editable job details */
+.jd-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 18px; }
+.jd-form .fld { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.jd-form .fld.wide { grid-column: 1 / -1; }
+.jd-form .jd-subhead { grid-column: 1 / -1; font-weight: 600; font-size: 15px; margin: 12px 0 2px; display: flex; align-items: center; }
+.jd-form .jd-subhead:first-child { margin-top: 0; }
+.jd-form label { font-size: 12px; color: var(--text-dim); }
+.jd-form input, .jd-form select, .jd-form textarea { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); padding: 8px 10px; border-radius: 8px; font-size: 14px; font-family: inherit; width: 100%; }
+.jd-form input:focus, .jd-form select:focus, .jd-form textarea:focus { outline: none; border-color: var(--primary); }
+.jd-form textarea { min-height: 58px; resize: vertical; }
+.jd-form .jd-check { flex-direction: row; align-items: center; gap: 9px; font-size: 14px; color: var(--text); cursor: pointer; }
+.jd-form .jd-check input { width: 18px; height: 18px; accent-color: var(--primary); cursor: pointer; }
+.saved-flash { border-color: var(--green) !important; box-shadow: 0 0 0 2px rgba(46, 204, 113, .22); }
+@media (max-width: 720px) { .jd-form { grid-template-columns: 1fr; } }
+
 details.jd-section { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); margin-bottom: 14px; }
 details.jd-section > summary { cursor: pointer; padding: 14px 16px; display: flex; align-items: center; font-size: 16px; font-weight: 600; list-style: none; user-select: none; }
 details.jd-section > summary::-webkit-details-marker { display: none; }
