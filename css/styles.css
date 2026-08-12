@@ -307,6 +307,24 @@ tbody tr:last-child td { border-bottom: none; }
 .result-panel { border-color: var(--green); background: #0f2419; }
 .result-text { font-size: 18px; font-weight: 600; line-height: 1.4; }
 
+/* Job detail: consolidated details + collapsible sections */
+.jd-details { margin-bottom: 16px; }
+.jd-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.jd-col-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.jd-col-head h3 { margin: 0; font-size: 15px; }
+.jd-notes { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.jd-notes h3 { margin: 0 0 6px; font-size: 15px; }
+
+details.jd-section { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); margin-bottom: 14px; }
+details.jd-section > summary { cursor: pointer; padding: 14px 16px; display: flex; align-items: center; font-size: 16px; font-weight: 600; list-style: none; user-select: none; }
+details.jd-section > summary::-webkit-details-marker { display: none; }
+.jd-sec-title::before { content: "\25B8"; display: inline-block; margin-right: 10px; color: var(--text-dim); transition: transform .15s; }
+details.jd-section[open] .jd-sec-title::before { transform: rotate(90deg); }
+.jd-sec-meta { margin-left: auto; font-size: 13px; font-weight: 400; }
+.jd-section-body { padding: 2px 16px 16px; }
+.jd-section-actions { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+@media (max-width: 720px) { .jd-grid { grid-template-columns: 1fr; } }
+
 .save-progress { border-style: dashed; }
 .run-save-hint { font-size: 13px; color: var(--text-dim); margin-bottom: 10px; }
 .run-job-fixed { font-size: 13px; color: var(--text-dim); margin-bottom: 10px; }

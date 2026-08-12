@@ -801,34 +801,36 @@ async function jobDetail(id) {
       </label>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
-      <div class="panel">
-        <div class="page-head" style="margin-bottom:10px"><h3 style="margin:0">Customer</h3>
-          <button class="btn btn-sm" onclick="${c ? `customerForm('${c.id}')` : `linkCustomerToJob('${j.id}', ${v ? `'${v.id}'` : "null"})`}">${c ? "Edit" : "Add"}</button></div>
-        ${c ? `<div><strong>${esc(c.name)}</strong></div>
-          ${c.company ? `<div class="muted">${esc(c.company)}</div>` : ""}
-          <div style="margin-top:6px">${c.phone ? `Tel: ${esc(c.phone)}` : ""}${c.phone && c.email ? " · " : ""}${c.email ? `${esc(c.email)}` : ""}</div>
-          ${c.address ? `<div class="muted" style="margin-top:4px">${esc(c.address)}</div>` : ""}`
-        : `<div class="muted">No customer linked.</div>`}
+    <div class="panel jd-details">
+      <div class="jd-grid">
+        <div>
+          <div class="jd-col-head"><h3>Customer</h3>
+            <button class="btn btn-sm" onclick="${c ? `customerForm('${c.id}')` : `linkCustomerToJob('${j.id}', ${v ? `'${v.id}'` : "null"})`}">${c ? "Edit" : "Add"}</button></div>
+          ${c ? `<div><strong>${esc(c.name)}</strong></div>
+            ${c.company ? `<div class="muted">${esc(c.company)}</div>` : ""}
+            <div style="margin-top:6px">${c.phone ? `Tel: ${esc(c.phone)}` : ""}${c.phone && c.email ? " · " : ""}${c.email ? esc(c.email) : ""}</div>
+            ${c.address ? `<div class="muted" style="margin-top:4px">${esc(c.address)}</div>` : ""}`
+          : `<div class="muted">No customer linked.</div>`}
+        </div>
+        <div>
+          <div class="jd-col-head"><h3>Vehicle</h3>
+            <button class="btn btn-sm" onclick="${v ? `vehicleForm('${v.id}')` : `jobForm('${j.id}')`}">${v ? "Edit" : "Add"}</button></div>
+          ${v ? `<div><strong>${esc(`${v.make || ""} ${v.model || ""}`) || "Vehicle"}</strong> <span class="chip">${esc(v.registration || "—")}</span></div>
+            <div class="muted" style="margin-top:6px">${[v.year ? `Year ${v.year}` : "", v.engine ? esc(v.engine) : "", v.ecu_type ? `ECU ${esc(v.ecu_type)}` : "", v.gearbox ? `Gearbox ${esc(v.gearbox)}` : ""].filter(Boolean).join(" · ")}</div>
+            ${v.vin ? `<div class="muted" style="margin-top:4px">VIN: ${esc(v.vin)}</div>` : ""}`
+          : `<div class="muted">No vehicle linked.</div>`}
+        </div>
       </div>
-      <div class="panel">
-        <div class="page-head" style="margin-bottom:10px"><h3 style="margin:0">Vehicle</h3>
-          <button class="btn btn-sm" onclick="${v ? `vehicleForm('${v.id}')` : `jobForm('${j.id}')`}">${v ? "Edit" : "Add"}</button></div>
-        ${v ? `<div><strong>${esc(`${v.make || ""} ${v.model || ""}`) || "Vehicle"}</strong> <span class="chip">${esc(v.registration || "—")}</span></div>
-          <div class="muted" style="margin-top:6px">${[v.year ? `Year ${v.year}` : "", v.engine ? esc(v.engine) : "", v.ecu_type ? `ECU ${esc(v.ecu_type)}` : "", v.gearbox ? `Gearbox ${esc(v.gearbox)}` : ""].filter(Boolean).join(" · ")}</div>
-          ${v.vin ? `<div class="muted" style="margin-top:4px">VIN: ${esc(v.vin)}</div>` : ""}`
-        : `<div class="muted">No vehicle linked.</div>`}
-      </div>
+      ${j.description ? `<div class="jd-notes"><h3>Notes</h3><p class="muted" style="white-space:pre-wrap;margin:0">${esc(j.description)}</p></div>` : ""}
     </div>
 
-    ${j.description ? `<div class="panel"><h3>Notes</h3><p class="muted" style="white-space:pre-wrap">${esc(j.description)}</p></div>` : ""}
-
-    <div class="page-head" style="margin-bottom:8px"><h1 style="font-size:18px">Checklist</h1>
-      <span class="page-sub" id="chk-count">${chkDone} of ${chkTotal} complete</span></div>
-    <div class="panel" style="margin-bottom:24px">
-      <div class="chk-bar"><div class="chk-bar-fill" id="chk-fill" style="width:${chkTotal ? chkDone / chkTotal * 100 : 0}%"></div></div>
-      <div id="chk-list">${checklistRowsHtml(chkItems)}</div>
-    </div>
+    <details class="jd-section">
+      <summary><span class="jd-sec-title">Checklist</span><span class="jd-sec-meta muted" id="chk-count">${chkDone} of ${chkTotal} complete</span></summary>
+      <div class="jd-section-body">
+        <div class="chk-bar"><div class="chk-bar-fill" id="chk-fill" style="width:${chkTotal ? chkDone / chkTotal * 100 : 0}%"></div></div>
+        <div id="chk-list">${checklistRowsHtml(chkItems)}</div>
+      </div>
+    </details>
 
     <div class="page-head"><h1 style="font-size:18px">Invoice</h1>
       <button class="btn btn-primary btn-sm" onclick="location.hash='invoices/new/${j.id}'">+ Create invoice</button></div>
@@ -840,22 +842,24 @@ async function jobDetail(id) {
         <td class="row-actions"><button class="btn btn-sm" onclick="location.hash='invoices/${i.id}'">View / Print</button></td></tr>`).join("")}</tbody>
     </table>` : `<div class="empty">No invoice yet. Click "Create invoice" to bill this job.</div>`}</div>
 
-    <div class="page-head"><h1 style="font-size:18px">Files</h1>
-      <div class="row-actions">
-        ${v && v.registration ? `<button class="btn btn-sm" onclick="scanJobFolder('${j.id}','${v.id}','${esc(v.registration)}')">🔍 Scan folder</button>` : ""}
-        ${v ? `<button class="btn btn-primary btn-sm" onclick="fileUploadForm('${v.id}','${j.id}')">+ Upload file</button>` : ""}
-      </div></div>
-    <div class="table-wrap" style="margin-bottom:24px">
-      ${!v ? `<div class="empty">Link a vehicle to this job (Edit) to attach files.</div>`
-        : files.length ? files.map(f => `<div class="file-row">
-        <div class="file-meta"><span class="name">${esc(f.label || f.original_name)}</span>
-          <span class="sub">${esc((f.kind || "").replace("_", " "))} · ${esc(f.original_name)} · ${fmtBytes(f.size_bytes)} · ${fmtDate(f.created_at)}</span></div>
-        <div class="file-actions">
-          <button class="btn btn-sm" onclick="fileEditForm('${f.id}')">Label</button>
-          <button class="btn btn-sm" onclick="downloadFile('${esc(f.storage_path)}','${esc(f.original_name)}')">Download</button>
-          <button class="btn btn-sm btn-danger" onclick="deleteFile('${f.id}','${esc(f.storage_path)}')">Delete</button>
-        </div></div>`).join("") : `<div class="empty">No files linked to this job yet.</div>`}
-    </div>
+    <details class="jd-section">
+      <summary><span class="jd-sec-title">Files</span><span class="jd-sec-meta muted">${v ? files.length + (files.length === 1 ? " file" : " files") : ""}</span></summary>
+      <div class="jd-section-body">
+        <div class="jd-section-actions">
+          ${v && v.registration ? `<button class="btn btn-sm" onclick="scanJobFolder('${j.id}','${v.id}','${esc(v.registration)}')">🔍 Scan folder</button>` : ""}
+          ${v ? `<button class="btn btn-primary btn-sm" onclick="fileUploadForm('${v.id}','${j.id}')">+ Upload file</button>` : ""}
+        </div>
+        ${!v ? `<div class="empty">Link a vehicle to this job (Edit) to attach files.</div>`
+          : files.length ? files.map(f => `<div class="file-row">
+          <div class="file-meta"><span class="name">${esc(f.label || f.original_name)}</span>
+            <span class="sub">${esc((f.kind || "").replace("_", " "))} · ${esc(f.original_name)} · ${fmtBytes(f.size_bytes)} · ${fmtDate(f.created_at)}</span></div>
+          <div class="file-actions">
+            <button class="btn btn-sm" onclick="fileEditForm('${f.id}')">Label</button>
+            <button class="btn btn-sm" onclick="downloadFile('${esc(f.storage_path)}','${esc(f.original_name)}')">Download</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteFile('${f.id}','${esc(f.storage_path)}')">Delete</button>
+          </div></div>`).join("") : `<div class="empty">No files linked to this job yet.</div>`}
+      </div>
+    </details>
 
     <div class="page-head"><h1 style="font-size:18px">Diagnostics</h1>
       <button class="btn btn-primary btn-sm" onclick="pickDiagnostic('${j.id}')">+ New diagnostic</button></div>
