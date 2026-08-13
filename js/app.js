@@ -1446,7 +1446,7 @@ views.settings = async () => {
 const PF_CONFUSIONS = {
   "0": "ODQ", "1": "ITL76", "2": "Z", "4": "A", "5": "S6", "6": "5G81",
   "7": "1T", "8": "6B", "9": "GQ",
-  "A": "4R", "B": "8RP", "C": "GOE", "D": "0OP", "E": "FCB",
+  "A": "4R", "B": "8RPC", "C": "GOEB", "D": "0OP", "E": "FCB",
   "F": "EPT", "G": "6CQ", "H": "NK", "J": "IL", "K": "HXR",
   "L": "1IJE", "M": "NW", "N": "MHV", "O": "0DCQ", "P": "RDFB",
   "R": "PBKA", "S": "5Z", "T": "17FY", "U": "VJ", "V": "UYN",
