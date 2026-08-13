@@ -1498,13 +1498,51 @@ function* pfProduct(arrays) {
     if (i < 0) return;
   }
 }
-function* pfGenerate(reg, maxEdits, yr) {
+// Alternatives to try at position i. "look" = look-alike map; "any" = every
+// valid character of the right kind (letters for letter slots, digits for digit
+// slots), which catches ordinary typos, not just visually-similar characters.
+function pfPositionOptions(reg, i, mode) {
+  const ch = reg[i];
+  if (mode === "any") {
+    const isDigit = (i === 2 || i === 3);
+    const pool = isDigit ? "0123456789" : "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    return pool.split("").filter(c => c !== ch);
+  }
+  return (PF_CONFUSIONS[ch] || "").split("").filter(c => c !== ch);
+}
+// Swap each adjacent pair — a "transposition" typo (e.g. ...YTL <-> ...TYL).
+function pfTranspositions(reg) {
+  const out = [];
+  for (let i = 0; i < reg.length - 1; i++) {
+    if (reg[i] === reg[i + 1]) continue;
+    const a = reg.split("");
+    [a[i], a[i + 1]] = [a[i + 1], a[i]];
+    out.push(a.join(""));
+  }
+  return out;
+}
+function* pfGenerate(reg, maxEdits, yr, mode, transpose) {
+  mode = mode || "look";
   const seen = new Set([reg]);
+  const yieldBatch = function* (arr) { arr.sort(); for (const c of arr) yield c; };
+
+  // Swapped-character candidates first (common, and cheap).
+  if (transpose) {
+    const batch = [];
+    for (const cand of pfTranspositions(reg)) {
+      if (seen.has(cand)) continue;
+      seen.add(cand);
+      if (pfIsPlausible(cand, yr)) batch.push(cand);
+    }
+    yield* yieldBatch(batch);
+  }
+
+  // Substitutions, 1..maxEdits characters changed at once.
   for (let n = 1; n <= maxEdits; n++) {
     const batch = [];
     for (const combo of pfCombinations(reg.length, n)) {
-      const options = combo.map(i => PF_CONFUSIONS[reg[i]] || "");
-      if (options.some(o => !o)) continue;
+      const options = combo.map(i => pfPositionOptions(reg, i, mode));
+      if (options.some(o => o.length === 0)) continue;
       for (const repl of pfProduct(options)) {
         const cand = reg.split("");
         combo.forEach((idx, k) => (cand[idx] = repl[k]));
@@ -1514,8 +1552,7 @@ function* pfGenerate(reg, maxEdits, yr) {
         if (pfIsPlausible(s, yr)) batch.push(s);
       }
     }
-    batch.sort();
-    for (const c of batch) yield c;
+    yield* yieldBatch(batch);
   }
 }
 function pfTake(gen, n) { const out = []; for (const x of gen) { out.push(x); if (out.length >= n) break; } return out; }
@@ -1567,13 +1604,15 @@ function pfReadInputs() {
     years: yrs,
     edits: Math.max(1, Math.min(3, parseInt(el("pf-edits").value, 10) || 1)),
     limit: Math.max(1, parseInt(el("pf-limit").value, 10) || 300),
+    mode: el("pf-mode") ? el("pf-mode").value : "look",
+    transpose: el("pf-transpose") ? el("pf-transpose").checked : true,
   };
 }
 
 window.pfPreview = () => {
   const p = pfReadInputs();
   if (!p) return;
-  const cands = pfTake(pfGenerate(p.reg, p.edits, p.years), p.limit);
+  const cands = pfTake(pfGenerate(p.reg, p.edits, p.years, p.mode, p.transpose), p.limit);
   pfClearLog();
   pfLog(`${cands.length} candidates for ${p.reg}\n`);
   cands.forEach((c, i) => pfLog(`${String(i + 1).padStart(4)}. ${c}`, "dim"));
@@ -1624,7 +1663,7 @@ window.pfStart = async () => {
   el("pf-stop").disabled = false;
   el("pf-match").innerHTML = "";
   pfClearLog();
-  const cands = pfTake(pfGenerate(p.reg, p.edits, p.years), p.limit);
+  const cands = pfTake(pfGenerate(p.reg, p.edits, p.years, p.mode, p.transpose), p.limit);
   el("pf-bar").style.width = "0%";
   pfLog(`Searching ${cands.length} candidates for ${p.reg}\n`);
   let found = 0;
@@ -1691,13 +1730,22 @@ views.plate = async () => {
             <input id="pf-y2" type="number" placeholder="2013" style="width:80px"></div></div>
         <div class="field"><label>Max changes (1–3)</label><input id="pf-edits" type="number" min="1" max="3" value="1"></div>
         <div class="field"><label>Max lookups</label><input id="pf-limit" type="number" min="10" max="2000" step="10" value="300"></div>
+        <div class="field"><label>What kind of mistake?</label>
+          <select id="pf-mode">
+            <option value="any">Any character (any typo)</option>
+            <option value="look">Only look-alike characters</option>
+          </select></div>
+        <div class="field"><label>&nbsp;</label>
+          <label style="display:inline-flex;align-items:center;gap:9px;cursor:pointer;padding-top:6px">
+            <input type="checkbox" id="pf-transpose" checked style="width:18px;height:18px;accent-color:var(--primary)">
+            <span>Also try swapped characters</span></label></div>
       </div>
       <div class="form-actions" style="justify-content:flex-start;gap:10px;margin-top:6px">
         <button class="btn" id="pf-preview" onclick="pfPreview()">Preview candidates</button>
         <button class="btn btn-primary" id="pf-start" onclick="pfStart()">Start search</button>
         <button class="btn btn-danger" id="pf-stop" onclick="pfStopSearch()" disabled>Stop</button>
       </div>
-      <div class="muted" style="font-size:12px;margin-top:10px">Each lookup queries the DVSA MOT API (~0.4s apart). "Max changes" is how many characters may have been mis-read; more changes = many more candidates.</div>
+      <div class="muted" style="font-size:12px;margin-top:10px">Each lookup queries the DVSA MOT API (~0.4s apart). <strong>Any character</strong> tries every possible typo (many more candidates — narrow it with the year range); <strong>look-alike</strong> only tries visually-similar characters. <strong>Swapped characters</strong> catches two letters/numbers typed in the wrong order. Raise <strong>Max changes</strong> if more than one character is wrong.</div>
     </div>
     <div class="progress-bar" style="margin-bottom:6px"><div class="progress-fill" id="pf-bar" style="width:0%"></div></div>
     <div class="muted" id="pf-status" style="margin-bottom:12px">Ready</div>
