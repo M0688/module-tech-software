@@ -1438,6 +1438,273 @@ views.settings = async () => {
   });
 };
 
+/* ===========================================================
+   PLATE FINDER — find a mis-read reg by trying look-alike plates
+   against the MOT database (via the plate-check Edge Function).
+   Ported from the desktop tool; same generation + filtering logic.
+   =========================================================== */
+const PF_CONFUSIONS = {
+  "0": "ODQ", "1": "ITL76", "2": "Z", "4": "A", "5": "S6", "6": "5G81",
+  "7": "1T", "8": "6B", "9": "GQ",
+  "A": "4R", "B": "8RP", "C": "GOE", "D": "0OP", "E": "FCB",
+  "F": "EPT", "G": "6CQ", "H": "NK", "J": "IL", "K": "HXR",
+  "L": "1IJE", "M": "NW", "N": "MHV", "O": "0DCQ", "P": "RDFB",
+  "R": "PBKA", "S": "5Z", "T": "17FY", "U": "VJ", "V": "UYN",
+  "W": "MV", "X": "KY", "Y": "VXT", "Z": "2S",
+};
+const PF_VALID_FIRST = "ABCDEFGHJKLMNOPRSTUVWXY";
+const PF_VALID_SECOND = "ABCDEFGHJKLMNOPRSTUVWXYZ";
+const PF_VALID_SUFFIX = "ABCDEFGHJKLMNOPRSTUVWXYZ";
+const PF_PLATE_RE = /^([A-Z]{2})(\d{2})([A-Z]{3})$/;
+
+function pfNormalise(reg) { return (reg || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); }
+function pfAgeToYears(id) {
+  if (id >= 1 && id <= 50) return [2000 + id, 2000 + id + 1];
+  if (id >= 51 && id <= 99) return [2000 + id - 50, 2000 + id - 50 + 1];
+  return null;
+}
+function pfIsPlausible(reg, yr) {
+  const m = PF_PLATE_RE.exec(reg);
+  if (!m) return false;
+  const [, area, age, suffix] = m;
+  if (!PF_VALID_FIRST.includes(area[0]) || !PF_VALID_SECOND.includes(area[1])) return false;
+  for (const ch of suffix) if (!PF_VALID_SUFFIX.includes(ch)) return false;
+  const yrs = pfAgeToYears(parseInt(age, 10));
+  if (!yrs) return false;
+  if (yr && (yrs[1] < yr[0] || yrs[0] > yr[1])) return false;
+  return true;
+}
+function* pfCombinations(n, r) {
+  if (r > n) return;
+  const idx = Array.from({ length: r }, (_, i) => i);
+  yield idx.slice();
+  while (true) {
+    let i = r - 1;
+    while (i >= 0 && idx[i] === i + n - r) i--;
+    if (i < 0) return;
+    idx[i]++;
+    for (let j = i + 1; j < r; j++) idx[j] = idx[j - 1] + 1;
+    yield idx.slice();
+  }
+}
+function* pfProduct(arrays) {
+  const lens = arrays.map(a => a.length);
+  if (lens.some(l => l === 0)) return;
+  const idx = arrays.map(() => 0);
+  while (true) {
+    yield idx.map((v, k) => arrays[k][v]);
+    let i = arrays.length - 1;
+    while (i >= 0) { idx[i]++; if (idx[i] < lens[i]) break; idx[i] = 0; i--; }
+    if (i < 0) return;
+  }
+}
+function* pfGenerate(reg, maxEdits, yr) {
+  const seen = new Set([reg]);
+  for (let n = 1; n <= maxEdits; n++) {
+    const batch = [];
+    for (const combo of pfCombinations(reg.length, n)) {
+      const options = combo.map(i => PF_CONFUSIONS[reg[i]] || "");
+      if (options.some(o => !o)) continue;
+      for (const repl of pfProduct(options)) {
+        const cand = reg.split("");
+        combo.forEach((idx, k) => (cand[idx] = repl[k]));
+        const s = cand.join("");
+        if (seen.has(s)) continue;
+        seen.add(s);
+        if (pfIsPlausible(s, yr)) batch.push(s);
+      }
+    }
+    batch.sort();
+    for (const c of batch) yield c;
+  }
+}
+function pfTake(gen, n) { const out = []; for (const x of gen) { out.push(x); if (out.length >= n) break; } return out; }
+function pfSleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function pfDescribeHtml(v) {
+  if (!v) return `<div class="muted">No details returned.</div>`;
+  const map = [["registration", "Registration"], ["make", "Make"], ["model", "Model"],
+    ["primaryColour", "Colour"], ["fuelType", "Fuel"], ["engineSize", "Engine (cc)"],
+    ["firstUsedDate", "First used"], ["manufactureDate", "Manufactured"]];
+  const rows = map.filter(([k]) => v[k]).map(([k, label]) =>
+    `<div class="pf-drow"><span>${label}</span><strong>${esc(String(v[k]))}</strong></div>`).join("");
+  const tests = v.motTests || [];
+  let testsHtml = "";
+  if (tests.length) {
+    testsHtml = `<div class="muted" style="margin:10px 0 4px">MOT history (${tests.length} tests)</div>` +
+      tests.slice(0, 6).map(t => `<div class="pf-mrow">${esc((t.completedDate || "").slice(0, 10))} · <span class="${t.testResult === "PASSED" ? "pf-pass" : "pf-fail"}">${esc(t.testResult || "?")}</span> · ${esc(String(t.odometerValue || "?"))} ${esc(t.odometerUnit || "")}</div>`).join("");
+  }
+  return rows + testsHtml;
+}
+
+window._pf = { running: false, stop: false, resolveMatch: null };
+
+function pfLog(text, tag) {
+  const log = el("pf-log");
+  if (!log) return;
+  const d = document.createElement("div");
+  d.className = "pf-line" + (tag ? " pf-" + tag : "");
+  d.textContent = text;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+}
+function pfClearLog() { if (el("pf-log")) el("pf-log").innerHTML = ""; }
+
+function pfReadInputs() {
+  const reg = pfNormalise(el("pf-reg").value);
+  if (!PF_PLATE_RE.test(reg)) { toast(`"${reg}" isn't a current-style plate (AA00AAA)`, "error"); return null; }
+  let yrs = null;
+  const y1 = el("pf-y1").value.trim(), y2 = el("pf-y2").value.trim();
+  if (y1 && y2) {
+    const a = parseInt(y1, 10), b = parseInt(y2, 10);
+    if (isNaN(a) || isNaN(b)) { toast("Years must be numbers", "error"); return null; }
+    yrs = [a, b];
+  }
+  return {
+    reg,
+    make: el("pf-make").value.trim().toUpperCase(),
+    model: el("pf-model").value.trim().toUpperCase(),
+    years: yrs,
+    edits: Math.max(1, Math.min(3, parseInt(el("pf-edits").value, 10) || 1)),
+    limit: Math.max(1, parseInt(el("pf-limit").value, 10) || 300),
+  };
+}
+
+window.pfPreview = () => {
+  const p = pfReadInputs();
+  if (!p) return;
+  const cands = pfTake(pfGenerate(p.reg, p.edits, p.years), p.limit);
+  pfClearLog();
+  pfLog(`${cands.length} candidates for ${p.reg}\n`);
+  cands.forEach((c, i) => pfLog(`${String(i + 1).padStart(4)}. ${c}`, "dim"));
+  el("pf-status").textContent = `${cands.length} candidates — nothing sent yet`;
+};
+
+window.pfShowMatch = (cand, data) => new Promise(resolve => {
+  window._pf.resolveMatch = resolve;
+  const m = el("pf-match");
+  m.innerHTML = `<div class="panel pf-matchcard">
+    <h3 style="margin:0 0 4px">Possible match: ${esc(cand)}</h3>
+    <div class="pf-details">${pfDescribeHtml(data)}</div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="pfResolveMatch('continue')">Not it — keep looking</button>
+      <button class="btn btn-primary" onclick="pfResolveMatch('stop')">This is the vehicle</button>
+    </div></div>`;
+  m.scrollIntoView({ behavior: "smooth", block: "center" });
+});
+window.pfResolveMatch = (val) => {
+  el("pf-match").innerHTML = "";
+  const r = window._pf.resolveMatch;
+  window._pf.resolveMatch = null;
+  if (r) r(val);
+};
+
+function pfFinish(msg, hit) {
+  window._pf.running = false;
+  el("pf-status").textContent = msg;
+  pfLog("\n" + msg, hit ? "hit" : "");
+  el("pf-start").disabled = false;
+  el("pf-preview").disabled = false;
+  el("pf-stop").disabled = true;
+}
+
+window.pfStopSearch = () => {
+  window._pf.stop = true;
+  if (window._pf.resolveMatch) { const r = window._pf.resolveMatch; window._pf.resolveMatch = null; r("abort"); }
+};
+
+window.pfStart = async () => {
+  if (window._pf.running) return;
+  const p = pfReadInputs();
+  if (!p) return;
+  window._pf.running = true;
+  window._pf.stop = false;
+  el("pf-start").disabled = true;
+  el("pf-preview").disabled = true;
+  el("pf-stop").disabled = false;
+  el("pf-match").innerHTML = "";
+  pfClearLog();
+  const cands = pfTake(pfGenerate(p.reg, p.edits, p.years), p.limit);
+  el("pf-bar").style.width = "0%";
+  pfLog(`Searching ${cands.length} candidates for ${p.reg}\n`);
+  let found = 0;
+  for (let i = 0; i < cands.length; i++) {
+    if (window._pf.stop) { pfLog("Stopped.", "dim"); break; }
+    const cand = cands[i];
+    el("pf-bar").style.width = ((i + 1) / cands.length * 100) + "%";
+    el("pf-status").textContent = `Checking ${cand} (${i + 1}/${cands.length})`;
+    let status = 0, data = {};
+    try {
+      const res = await db.functions.invoke("plate-check", { body: { reg: cand } });
+      if (res.error) { status = 0; data = { error: String(res.error) }; }
+      else { status = res.data.status; data = res.data; }
+    } catch (e) { status = 0; data = { error: String(e) }; }
+    const num = String(i + 1).padStart(4);
+    if (status === 404) {
+      pfLog(`${num}. ${cand}  no record`, "dim");
+    } else if (status === 429) {
+      pfLog(`${num}. ${cand}  rate limited, waiting 30s`, "err");
+      await pfSleep(30000);
+      continue;
+    } else if (status === 200) {
+      const make = (data.make || "").toUpperCase(), model = (data.model || "").toUpperCase();
+      if (p.make && !make.includes(p.make)) {
+        pfLog(`${num}. ${cand}  found — ${make || "unknown"}, skipped`, "skip");
+      } else if (p.model && !model.includes(p.model)) {
+        pfLog(`${num}. ${cand}  found — ${make} ${model || "?"}, skipped`, "skip");
+      } else {
+        found++;
+        pfLog(`${num}. ${cand}  MATCH`, "hit");
+        const choice = await pfShowMatch(cand, data.data);
+        if (choice === "stop") {
+          el("pf-match").innerHTML = `<div class="panel pf-matchcard" style="border-color:var(--green)">
+            <h3 style="margin:0 0 6px">✅ Confirmed: ${esc(cand)}</h3>
+            <div class="pf-details">${pfDescribeHtml(data.data)}</div></div>`;
+          pfFinish("Confirmed: " + cand, true);
+          return;
+        }
+        if (choice === "abort" || window._pf.stop) { pfLog("Stopped.", "dim"); break; }
+      }
+    } else if (status === 0) {
+      pfLog(`${num}. ${cand}  network error: ${data.error || ""}`, "err");
+    } else {
+      pfLog(`${num}. ${cand}  error ${status}`, "err");
+    }
+    await pfSleep(400);
+  }
+  pfFinish(`Finished. ${found} match(es) shown.`, false);
+};
+
+views.plate = async () => {
+  el("view").innerHTML = `
+    <div class="page-head"><div><h1>Plate Finder</h1>
+      <div class="page-sub">Find a mis-read registration by trying look-alike plates against the MOT database</div></div></div>
+    <div class="panel">
+      <div class="form-grid">
+        <div class="field"><label>Registration you have *</label><input id="pf-reg" placeholder="e.g. OE61TYL" style="text-transform:uppercase;font-weight:700"></div>
+        <div class="field"><label>Make (optional filter)</label><input id="pf-make" placeholder="e.g. VOLVO" style="text-transform:uppercase"></div>
+        <div class="field"><label>Model (optional filter)</label><input id="pf-model" placeholder="e.g. V50" style="text-transform:uppercase"></div>
+        <div class="field"><label>Years (from – to)</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input id="pf-y1" type="number" placeholder="2010" style="width:80px">
+            <span class="muted">to</span>
+            <input id="pf-y2" type="number" placeholder="2013" style="width:80px"></div></div>
+        <div class="field"><label>Max changes (1–3)</label><input id="pf-edits" type="number" min="1" max="3" value="1"></div>
+        <div class="field"><label>Max lookups</label><input id="pf-limit" type="number" min="10" max="2000" step="10" value="300"></div>
+      </div>
+      <div class="form-actions" style="justify-content:flex-start;gap:10px;margin-top:6px">
+        <button class="btn" id="pf-preview" onclick="pfPreview()">Preview candidates</button>
+        <button class="btn btn-primary" id="pf-start" onclick="pfStart()">Start search</button>
+        <button class="btn btn-danger" id="pf-stop" onclick="pfStopSearch()" disabled>Stop</button>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:10px">Each lookup queries the DVSA MOT API (~0.4s apart). "Max changes" is how many characters may have been mis-read; more changes = many more candidates.</div>
+    </div>
+    <div class="progress-bar" style="margin-bottom:6px"><div class="progress-fill" id="pf-bar" style="width:0%"></div></div>
+    <div class="muted" id="pf-status" style="margin-bottom:12px">Ready</div>
+    <div id="pf-match"></div>
+    <div class="panel"><div class="pf-log" id="pf-log"></div></div>`;
+};
+
 const FIELD_TYPES = [["text", "Text"], ["number", "Number"], ["textarea", "Long text"], ["photo", "Photo / file"]];
 
 window.openFile = async (path) => {

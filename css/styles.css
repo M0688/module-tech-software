@@ -340,6 +340,21 @@ details.jd-section[open] .jd-sec-title::before { transform: rotate(90deg); }
 .jd-section-actions { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 @media (max-width: 720px) { .jd-grid { grid-template-columns: 1fr; } }
 
+/* Plate Finder */
+.pf-log { font-family: ui-monospace, "Cascadia Code", "Consolas", monospace; font-size: 12.5px; line-height: 1.5; max-height: 360px; overflow-y: auto; white-space: pre-wrap; }
+.pf-line { min-height: 1px; }
+.pf-hit { color: var(--green); font-weight: 700; }
+.pf-skip { color: #d6a400; }
+.pf-err { color: var(--red); }
+.pf-dim { color: var(--text-dim); }
+.pf-matchcard { border-color: var(--primary); }
+.pf-details { display: flex; flex-direction: column; gap: 3px; margin: 8px 0 4px; }
+.pf-drow { display: flex; gap: 12px; font-size: 14px; }
+.pf-drow span { color: var(--text-dim); min-width: 110px; }
+.pf-mrow { font-size: 13px; color: var(--text-dim); }
+.pf-pass { color: var(--green); }
+.pf-fail { color: var(--red); }
+
 .save-progress { border-style: dashed; }
 .run-save-hint { font-size: 13px; color: var(--text-dim); margin-bottom: 10px; }
 .run-job-fixed { font-size: 13px; color: var(--text-dim); margin-bottom: 10px; }
