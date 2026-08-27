@@ -15,7 +15,8 @@
 //
 // Secrets used (rows in app_secrets):
 //   GEMINI_API_KEY  required — https://aistudio.google.com/apikey
-//   GEMINI_MODEL    optional — defaults to gemini-2.5-flash
+//   GEMINI_MODEL    optional — overrides DEFAULT_MODEL below without a redeploy,
+//                   which is how to move to a newer model when Google retires this one
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -32,7 +33,7 @@ function json(obj: unknown, status = 200) {
   });
 }
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_MODEL = "gemini-3.6-flash";
 const MAX_PROMPT = 60_000;   // characters
 const MAX_IMAGES = 4;
 const MAX_IMAGE = 6_000_000; // base64 characters, ~4.5MB of image

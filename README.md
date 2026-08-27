@@ -78,12 +78,17 @@ Gemini isn't set up yet. To switch them on:
 That's it — no redeploy needed. The key is only ever read server-side by the `gemini`
 Edge Function, which refuses anyone who isn't logged in, so it never reaches the browser.
 
-To use a different model, add a `GEMINI_MODEL` row (it defaults to `gemini-2.5-flash`):
+Google retires models periodically. When that happens the AI buttons show Google's own
+message ("this model is no longer available…") naming the replacement — switch to it by
+adding a `GEMINI_MODEL` row, no redeploy needed:
 
 ```sql
-insert into app_secrets (key, value) values ('GEMINI_MODEL', 'gemini-2.5-pro')
+insert into app_secrets (key, value) values ('GEMINI_MODEL', 'gemini-3.6-flash')
 on conflict (key) do update set value = excluded.value;
 ```
+
+Without that row the function uses whatever `DEFAULT_MODEL` is set to in
+`supabase/functions/gemini/index.ts` (currently `gemini-3.6-flash`).
 
 **A word on trusting it.** Gemini is good at narrowing a fault down and at spotting obvious
 board damage, but it will occasionally state a pin number or a resistance with total confidence
