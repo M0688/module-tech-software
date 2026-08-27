@@ -49,11 +49,22 @@ function readForm(form) {
 /* ===========================================================
    AUTH
    =========================================================== */
+// Which user the screen is currently built for. supabase-js re-fires
+// onAuthStateChange every time the tab regains focus (it refreshes the token on
+// visibilitychange) and again on each token refresh — perhaps hourly. Re-rendering
+// on those would wipe whatever is on screen, so we only rebuild when the user
+// actually changes: signed in, signed out, or switched account.
+let shownUserId = null;
+
 async function initAuth() {
   const { data: { session } } = await db.auth.getSession();
+  shownUserId = session ? session.user.id : null;
   if (session) showApp(session); else showLogin();
 
   db.auth.onAuthStateChange((_e, session) => {
+    const uid = session ? session.user.id : null;
+    if (uid === shownUserId) return;   // token refresh or tab refocus — leave the screen alone
+    shownUserId = uid;
     if (session) showApp(session); else showLogin();
   });
 }
@@ -116,6 +127,11 @@ function route() {
   document.querySelectorAll(".nav-link").forEach(a =>
     a.classList.toggle("active", a.dataset.view === name));
   const fn = views[name] || views.dashboard;
+  // Leaving the page drops any half-finished run — whatever we're navigating to
+  // sets these up again if it needs them. Without this the unsaved-work warning
+  // below would keep firing long after you'd moved on.
+  window._treeRun = null;
+  window._flowRun = null;
   el("view").innerHTML = `<div class="empty">Loading…</div>`;
   fn(rest).catch(err => {
     console.error(err);
@@ -123,6 +139,32 @@ function route() {
   });
 }
 window.addEventListener("hashchange", route);
+
+// Is there diagnostic work on screen that hasn't been saved to a job yet?
+function unsavedRunWork() {
+  const t = window._treeRun;
+  if (t && (t.path.length || t.conclusion != null)) return true;
+  const f = window._flowRun;
+  if (f) {
+    for (let si = 0; si < f.steps.length; si++) {
+      if ((el(`note_${si}`) || {}).value) return true;
+      for (let fi = 0; fi < (f.steps[si].fields || []).length; fi++) {
+        const inp = el(`f_${si}_${fi}`);
+        if (inp && inp.type !== "file" && inp.value.trim()) return true;
+        if (inp && inp.type === "file" && inp.files && inp.files.length) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Closing the tab or hitting reload mid-diagnostic would bin the lot. The browser
+// shows its own generic "leave site?" prompt — we only decide whether to ask.
+window.addEventListener("beforeunload", (e) => {
+  if (!unsavedRunWork()) return;
+  e.preventDefault();
+  e.returnValue = "";
+});
 
 /* ===========================================================
    DASHBOARD
@@ -135,14 +177,18 @@ views.dashboard = async () => {
     db.from("jobs").select("*", { count: "exact", head: true }).neq("status", "completed").neq("status", "invoiced"),
     db.from("invoices").select("*", { count: "exact", head: true }).neq("status", "paid"),
   ]);
-  const { data: recentJobs } = await db.from("jobs")
-    .select("*, vehicles(registration, make, model), customers(name)")
-    .order("created_at", { ascending: false }).limit(6);
+  const [{ data: recentJobs }, shortcuts] = await Promise.all([
+    db.from("jobs")
+      .select("*, vehicles(registration, make, model), customers(name)")
+      .order("created_at", { ascending: false }).limit(6),
+    loadShortcuts(),
+  ]);
 
   el("view").innerHTML = `
     <div class="page-head"><div><h1>Dashboard</h1>
       <div class="page-sub">Welcome back — here's the shop at a glance.</div></div>
       <button class="btn btn-primary" id="drive-sync-btn" onclick="syncDrive()">☁ Sync from Google Drive</button></div>
+    ${shortcutBarHtml(shortcuts)}
     <div class="stats">
       <div class="stat-card"><div class="num">${cust.count ?? 0}</div><div class="label">Customers</div></div>
       <div class="stat-card"><div class="num">${veh.count ?? 0}</div><div class="label">Vehicles</div></div>
@@ -1375,6 +1421,180 @@ window.invSetStatus = async (id, status) => {
   toast("Status updated to " + status, "success");
 };
 
+/* ===========================================================
+   SHORTCUTS — buttons that launch tuning software on this PC
+
+   A web page can't start an .exe. What it can do is follow a custom URL
+   protocol, so each shortcut is a scheme like `mts-winols://` that Windows
+   maps to the program. Those mappings live in the registry, under
+   HKEY_CURRENT_USER so no admin rights are needed.
+
+   Rather than hand-write registry entries, Settings generates a .reg file
+   from the paths typed in — download, double-click, done. The paths are only
+   ever used to WRITE that file; nothing in the app or the database executes
+   anything.
+
+   Because the mapping is per-machine, the .reg has to be installed once on
+   each laptop that uses the app. The shortcut list itself is shared.
+   =========================================================== */
+
+async function loadShortcuts() {
+  const { data } = await db.from("app_shortcuts").select("*").order("sort").order("label");
+  return data || [];
+}
+
+// Buttons for the dashboard.
+function shortcutBarHtml(list) {
+  if (!list.length) return "";
+  return `<div class="panel">
+    <div class="sc-head">Tuning tools
+      <span class="muted" style="font-weight:400">— opens the program on this PC</span></div>
+    <div class="sc-grid">${list.map(s => `
+      <button class="sc-btn" onclick="launchShortcut('${esc(s.scheme)}', '${esc(s.label).replace(/'/g, "\\'")}')">
+        <span class="sc-icon">${esc(s.icon || "🔧")}</span>
+        <span class="sc-label">${esc(s.label)}</span>
+      </button>`).join("")}</div>
+  </div>`;
+}
+
+// Fire the protocol. If Windows doesn't know the scheme, nothing happens at all
+// — no error, no dialog — so nudge towards the installer when we still have focus
+// a moment later. A program that did open (or Chrome's own "Open …?" prompt) takes
+// focus away, so this stays quiet in the normal case.
+window.launchShortcut = (scheme, label) => {
+  window.location.href = scheme + "://launch";
+  setTimeout(() => {
+    if (!document.hasFocus()) return;
+    toast(`${label} didn't open — install the shortcut file from Settings first`, "error");
+  }, 2500);
+};
+
+/* ---------- Settings: manage the list ---------- */
+
+// A scheme has to be a valid URL protocol: letter first, then letters/digits/+-.
+function schemeFromLabel(label) {
+  const slug = String(label).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return "mts-" + (slug || "tool");
+}
+
+function shortcutRowHtml(s = {}) {
+  return `<tr>
+    <td class="col-icon"><input class="sc-r-icon" value="${esc(s.icon)}" placeholder="🔧" maxlength="4"></td>
+    <td><input class="sc-r-label" value="${esc(s.label)}" placeholder="e.g. WinOLS"></td>
+    <td><input class="sc-r-path" value="${esc(s.exe_path)}" placeholder="C:\\Program Files\\WinOLS\\winols.exe"></td>
+    <td class="col-x"><button type="button" class="li-del" onclick="this.closest('tr').remove()">&times;</button></td>
+    <input type="hidden" class="sc-r-scheme" value="${esc(s.scheme)}">
+  </tr>`;
+}
+window.shortcutAddRow = () => { el("sc-body").insertAdjacentHTML("beforeend", shortcutRowHtml()); };
+
+// Read the table back out, filling in a scheme for new rows and keeping existing
+// ones stable — the scheme is what the registry points at, so changing it would
+// silently break an already-installed shortcut.
+function readShortcutRows() {
+  const used = new Set();
+  return [...document.querySelectorAll("#sc-body tr")].map((tr, i) => {
+    const label = tr.querySelector(".sc-r-label").value.trim();
+    if (!label) return null;
+    let scheme = tr.querySelector(".sc-r-scheme").value.trim() || schemeFromLabel(label);
+    while (used.has(scheme)) scheme += "-2";
+    used.add(scheme);
+    return {
+      label,
+      scheme,
+      exe_path: tr.querySelector(".sc-r-path").value.trim() || null,
+      icon: tr.querySelector(".sc-r-icon").value.trim() || null,
+      sort: i,
+    };
+  }).filter(Boolean);
+}
+
+window.saveShortcuts = async () => {
+  const rows = readShortcutRows();
+  await db.from("app_shortcuts").delete().not("id", "is", null);
+  if (rows.length) {
+    const { error } = await db.from("app_shortcuts").insert(rows);
+    if (error) return toast(error.message, "error");
+  }
+  toast("Shortcuts saved — download the installer if you added any", "success");
+  route();
+};
+
+/* ---------- .reg generation ---------- */
+
+// Registry string values escape backslashes and quotes.
+const regEsc = (s) => String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+function regFileContent(list) {
+  const out = ["Windows Registry Editor Version 5.00", ""];
+  list.forEach(s => {
+    if (!s.exe_path) return;
+    out.push(`[HKEY_CURRENT_USER\\Software\\Classes\\${s.scheme}]`);
+    out.push(`@="URL:${regEsc(s.label)} (Module Tech)"`);
+    out.push(`"URL Protocol"=""`);
+    out.push("");
+    out.push(`[HKEY_CURRENT_USER\\Software\\Classes\\${s.scheme}\\shell\\open\\command]`);
+    out.push(`@="\\"${regEsc(s.exe_path)}\\""`);
+    out.push("");
+  });
+  return out.join("\r\n");
+}
+
+// .reg files are UTF-16LE with a BOM — regedit will mangle accented characters
+// in a path otherwise.
+function utf16leBlob(str) {
+  const buf = new ArrayBuffer(2 + str.length * 2);
+  const view = new DataView(buf);
+  view.setUint16(0, 0xFEFF, true);
+  for (let i = 0; i < str.length; i++) view.setUint16(2 + i * 2, str.charCodeAt(i), true);
+  return new Blob([buf], { type: "application/octet-stream" });
+}
+
+window.downloadShortcutReg = () => {
+  const rows = readShortcutRows().filter(r => r.exe_path);
+  if (!rows.length) return toast("Add a program and its path first", "error");
+  const url = URL.createObjectURL(utf16leBlob(regFileContent(rows)));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "module-tech-shortcuts.reg";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast("Downloaded — double-click it, then allow the change", "success");
+};
+
+function shortcutSettingsHtml(list) {
+  return `<div class="panel">
+    <h3>Tuning tool shortcuts</h3>
+    <div class="muted" style="font-size:12px;margin-bottom:12px">
+      Buttons on the Dashboard that open programs on this PC. Type the full path to each
+      <code>.exe</code> — right-click the program's desktop icon → Properties → Target to find it.
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th class="col-icon">Icon</th><th>Name</th><th>Path to the program</th><th></th></tr></thead>
+      <tbody id="sc-body">${(list.length ? list : [{}]).map(shortcutRowHtml).join("")}</tbody>
+    </table></div>
+    <button type="button" class="btn btn-sm" onclick="shortcutAddRow()">+ Add shortcut</button>
+    <div class="sc-install">
+      <strong>One-time setup on each laptop</strong>
+      <ol>
+        <li>Save the list below.</li>
+        <li>Download the shortcut file and double-click it. Windows will ask to confirm — say yes.</li>
+        <li>The Dashboard buttons will work from then on. Chrome asks "Open …?" the first time
+            you use each one; tick the box to stop it asking again.</li>
+      </ol>
+      <div class="muted" style="font-size:12px">
+        Only needed again if you add a shortcut or a program moves.
+      </div>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn" onclick="downloadShortcutReg()">⬇ Download shortcut file</button>
+      <button type="button" class="btn btn-primary" onclick="saveShortcuts()">Save shortcuts</button>
+    </div>
+  </div>`;
+}
+
 /* ===================== SETTINGS ===================== */
 function presetRowHtml(p = {}) {
   return `<tr>
@@ -1398,9 +1618,10 @@ window.savePresets = async () => {
 };
 
 views.settings = async () => {
-  const [{ data: s }, { data: presets }] = await Promise.all([
+  const [{ data: s }, { data: presets }, shortcuts] = await Promise.all([
     db.from("business_settings").select("*").eq("id", true).single(),
     db.from("invoice_presets").select("*").order("sort").order("created_at"),
+    loadShortcuts(),
   ]);
   el("view").innerHTML = `
     <div class="page-head"><div><h1>Settings</h1>
@@ -1433,7 +1654,8 @@ views.settings = async () => {
       <h3>Folder scanning</h3>
       <div class="muted" style="font-size:13px;margin-bottom:12px">Choose your files folder (the one that holds your year/reg folders). The <strong>Scan folder</strong> button on each job then pulls in that reg's files. Chrome or Edge on a computer only.</div>
       <button type="button" class="btn" onclick="changeScanFolder()">Choose scan folder…</button>
-    </div>`;
+    </div>
+    ${shortcutSettingsHtml(shortcuts)}`;
   $("#settings-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const payload = readForm(e.target);
