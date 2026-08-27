@@ -1452,7 +1452,7 @@ function shortcutBarHtml(list) {
     <div class="sc-head">Tuning tools
       <span class="muted" style="font-weight:400">— opens the program on this PC</span></div>
     <div class="sc-grid">${list.map(s => `
-      <button class="sc-btn" onclick="launchShortcut('${esc(s.scheme)}', '${esc(s.label).replace(/'/g, "\\'")}')">
+      <button class="sc-btn" onclick="launchShortcut('${esc(s.scheme)}')">
         ${s.icon_path
           ? `<img class="sc-logo" data-path="${esc(s.icon_path)}" alt="">`
           : `<span class="sc-icon">${esc(s.icon || "🔧")}</span>`}
@@ -1469,16 +1469,13 @@ async function signShortcutLogos(root = document) {
   }
 }
 
-// Fire the protocol. If Windows doesn't know the scheme, nothing happens at all
-// — no error, no dialog — so nudge towards the installer when we still have focus
-// a moment later. A program that did open (or Chrome's own "Open …?" prompt) takes
-// focus away, so this stays quiet in the normal case.
-window.launchShortcut = (scheme, label) => {
+// Fire the protocol and leave it at that. An earlier version tried to detect a
+// failed launch by checking whether the page still had focus after a couple of
+// seconds — it cried wolf on programs that launch without stealing focus, which
+// is most of them. There's no reliable way to tell from the page whether Windows
+// handled the scheme, and a wrong warning is worse than none.
+window.launchShortcut = (scheme) => {
   window.location.href = scheme + "://launch";
-  setTimeout(() => {
-    if (!document.hasFocus()) return;
-    toast(`${label} didn't open — install the shortcut file from Settings first`, "error");
-  }, 2500);
 };
 
 /* ---------- Settings: manage the list ---------- */
@@ -1606,9 +1603,14 @@ const regEsc = (s) => String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 // Pasting a .lnk is therefore the nicer option where the program ships one.
 function regCommandFor(path) {
   const p = String(path).trim();
-  if (/\.lnk$/i.test(p)) return `explorer.exe \\"${regEsc(p)}\\"`;
-  const dir = p.includes("\\") ? p.replace(/\\[^\\]*$/, "") : "";
-  const startIn = dir ? ` /d \\"${regEsc(dir)}\\"` : "";
+  // A .lnk already carries its own target, arguments and "start in", so let the
+  // shell resolve it. For a bare .exe, point /d at the program's own folder —
+  // without it the program inherits Chrome's working directory (System32), which
+  // breaks tools that read data/log folders next to themselves.
+  // (explorer.exe also works but drops launches intermittently.)
+  const startIn = (!/\.lnk$/i.test(p) && p.includes("\\"))
+    ? ` /d \\"${regEsc(p.replace(/\\[^\\]*$/, ""))}\\"`
+    : "";
   return `cmd.exe /c start \\"\\"${startIn} \\"${regEsc(p)}\\"`;
 }
 
