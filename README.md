@@ -23,6 +23,13 @@ Workshop management app for vehicle remapping & module repair, recovery and clon
   Status tracking (draft / sent / paid / overdue).
 - 🧭 Diagnostics — build step-by-step templates for PCB/module work, then run one against a job,
   capturing readings and photos as you go
+- ✨ AI assistance (Google Gemini) — four places it helps, all optional:
+  **fault analysis** on a job (symptoms + fault codes → ranked likely causes, each with the checks
+  that confirm or rule it out), **board photo inspection** (photograph a PCB and it flags burnt or
+  corroded components and reads off chip part numbers), **template generation** (describe a
+  procedure and it drafts the decision tree or checklist for you to correct before saving), and
+  **mid-run help** (a button on any running diagnostic that explains the check on screen or
+  interprets the readings so far). Nothing it produces is saved to a job unless you press save.
 - 💷 Costs — log general expenses (tools, subscriptions). Per-job "had to buy a file" costs are
   tracked on the job itself.
 - 📊 Reports — invoiced / paid / outstanding, costs, net and profit margin, income by month,
@@ -37,20 +44,51 @@ Workshop management app for vehicle remapping & module repair, recovery and clon
 | Front end (the screens) | Plain HTML / CSS / JavaScript — hostable free on GitHub Pages |
 | Database, file storage, login | [Supabase](https://supabase.com) (free tier) |
 | Registration lookup | Supabase Edge Function (`lookup-vehicle`) calling the DVLA & MOT APIs |
+| AI assistance | Supabase Edge Function (`gemini`) calling the Google Gemini API |
 | Google Drive sync | Google Identity Services + the Drive API, straight from the browser |
 
 No build step. The whole app is static files.
 
 ```
-index.html        ← the page (login, sidebar, and one div the app renders into)
-css/styles.css    ← styling
-js/config.js      ← Supabase connection (public keys — safe to commit)
-js/app.js         ← all app logic
-assets/logo.png   ← logo, used on the login screen, sidebar and invoices
+index.html                        ← the page (login, sidebar, and one div the app renders into)
+css/styles.css                    ← styling
+js/config.js                      ← Supabase connection (public keys — safe to commit)
+js/app.js                         ← all app logic
+assets/logo.png                   ← logo, used on the login screen, sidebar and invoices
+supabase/functions/gemini/        ← the AI Edge Function (source kept here for reference;
+                                    deploy with the Supabase CLI or dashboard)
 ```
 
 The lookup runs server-side in an Edge Function so the DVLA and MOT API keys stay
-out of the public front end.
+out of the public front end. The Gemini key works the same way.
+
+## Turning on the AI features
+
+The AI buttons stay in place whether or not a key is set — without one they just say
+Gemini isn't set up yet. To switch them on:
+
+1. Get a key from [Google AI Studio](https://aistudio.google.com/apikey).
+2. Add it to the `app_secrets` table (SQL editor in the Supabase dashboard):
+
+   ```sql
+   insert into app_secrets (key, value) values ('GEMINI_API_KEY', 'your-key-here')
+   on conflict (key) do update set value = excluded.value;
+   ```
+
+That's it — no redeploy needed. The key is only ever read server-side by the `gemini`
+Edge Function, which refuses anyone who isn't logged in, so it never reaches the browser.
+
+To use a different model, add a `GEMINI_MODEL` row (it defaults to `gemini-2.5-flash`):
+
+```sql
+insert into app_secrets (key, value) values ('GEMINI_MODEL', 'gemini-2.5-pro')
+on conflict (key) do update set value = excluded.value;
+```
+
+**A word on trusting it.** Gemini is good at narrowing a fault down and at spotting obvious
+board damage, but it will occasionally state a pin number or a resistance with total confidence
+and be wrong. It's asked to flag anything it isn't sure about, and every panel carries a
+reminder — treat it as a second opinion from someone who hasn't seen the car, not as a diagnosis.
 
 ## Running it locally
 
