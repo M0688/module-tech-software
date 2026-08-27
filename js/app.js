@@ -207,6 +207,7 @@ views.dashboard = async () => {
           <td class="muted">${fmtDate(j.created_at)}</td></tr>`).join("")}</tbody>
       </table></div>` : `<div class="empty">No jobs yet. Add a customer and vehicle, then create a job.</div>`}
     </div>`;
+  signShortcutLogos();
 };
 
 /* ===========================================================
@@ -1443,7 +1444,8 @@ async function loadShortcuts() {
   return data || [];
 }
 
-// Buttons for the dashboard.
+// Buttons for the dashboard. An uploaded logo wins; the emoji is the fallback
+// for shortcuts that haven't had one added.
 function shortcutBarHtml(list) {
   if (!list.length) return "";
   return `<div class="panel">
@@ -1451,10 +1453,20 @@ function shortcutBarHtml(list) {
       <span class="muted" style="font-weight:400">— opens the program on this PC</span></div>
     <div class="sc-grid">${list.map(s => `
       <button class="sc-btn" onclick="launchShortcut('${esc(s.scheme)}', '${esc(s.label).replace(/'/g, "\\'")}')">
-        <span class="sc-icon">${esc(s.icon || "🔧")}</span>
+        ${s.icon_path
+          ? `<img class="sc-logo" data-path="${esc(s.icon_path)}" alt="">`
+          : `<span class="sc-icon">${esc(s.icon || "🔧")}</span>`}
         <span class="sc-label">${esc(s.label)}</span>
       </button>`).join("")}</div>
   </div>`;
+}
+
+// Logos live in the private files bucket, so each needs a signed URL.
+async function signShortcutLogos(root = document) {
+  for (const img of root.querySelectorAll("img.sc-logo[data-path]")) {
+    const { data } = await db.storage.from(cfg.FILE_BUCKET).createSignedUrl(img.dataset.path, 3600);
+    if (data) img.src = data.signedUrl;
+  }
 }
 
 // Fire the protocol. If Windows doesn't know the scheme, nothing happens at all
@@ -1479,13 +1491,33 @@ function schemeFromLabel(label) {
 
 function shortcutRowHtml(s = {}) {
   return `<tr>
-    <td class="col-icon"><input class="sc-r-icon" value="${esc(s.icon)}" placeholder="🔧" maxlength="4"></td>
+    <td class="col-logo">
+      <div class="sc-logo-cell">
+        ${s.icon_path
+          ? `<img class="sc-logo sc-logo-preview" data-path="${esc(s.icon_path)}" alt="">`
+          : `<span class="sc-icon sc-logo-preview">${esc(s.icon) || "🔧"}</span>`}
+        <label class="sc-logo-pick">Logo…
+          <input type="file" class="sc-r-file" accept="image/*" onchange="shortcutPreviewLogo(this)">
+        </label>
+      </div>
+    </td>
     <td><input class="sc-r-label" value="${esc(s.label)}" placeholder="e.g. WinOLS"></td>
     <td><input class="sc-r-path" value="${esc(s.exe_path)}" placeholder="C:\\Program Files\\WinOLS\\winols.exe"></td>
     <td class="col-x"><button type="button" class="li-del" onclick="this.closest('tr').remove()">&times;</button></td>
+    <input type="hidden" class="sc-r-icon" value="${esc(s.icon)}">
     <input type="hidden" class="sc-r-scheme" value="${esc(s.scheme)}">
+    <input type="hidden" class="sc-r-iconpath" value="${esc(s.icon_path)}">
   </tr>`;
 }
+
+// Show the picked file immediately so it's obvious which row got which logo.
+window.shortcutPreviewLogo = (input) => {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const cell = input.closest(".sc-logo-cell");
+  cell.querySelector(".sc-logo-preview").outerHTML =
+    `<img class="sc-logo sc-logo-preview" src="${URL.createObjectURL(file)}" alt="">`;
+};
 window.shortcutAddRow = () => { el("sc-body").insertAdjacentHTML("beforeend", shortcutRowHtml()); };
 
 // Read the table back out, filling in a scheme for new rows and keeping existing
@@ -1504,19 +1536,56 @@ function readShortcutRows() {
       scheme,
       exe_path: tr.querySelector(".sc-r-path").value.trim() || null,
       icon: tr.querySelector(".sc-r-icon").value.trim() || null,
+      icon_path: tr.querySelector(".sc-r-iconpath").value.trim() || null,
       sort: i,
+      _file: (tr.querySelector(".sc-r-file").files || [])[0] || null,
     };
   }).filter(Boolean);
 }
 
+// Shrink a logo before upload — these render at 40px, so a 2MB PNG is wasted bytes
+// on every dashboard load. Kept as PNG so transparent backgrounds survive.
+function shortcutLogoBlob(file, maxPx = 128) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Couldn't read " + file.name));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Couldn't open " + file.name));
+      img.onload = () => {
+        const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+        const c = document.createElement("canvas");
+        c.width = Math.round(img.width * scale);
+        c.height = Math.round(img.height * scale);
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        c.toBlob(b => b ? resolve(b) : reject(new Error("Couldn't resize " + file.name)), "image/png");
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 window.saveShortcuts = async () => {
   const rows = readShortcutRows();
+  try {
+    for (const r of rows) {
+      if (!r._file) continue;
+      const blob = await shortcutLogoBlob(r._file);
+      const path = `shortcut-logos/${r.scheme}_${Date.now()}.png`;
+      const { error } = await db.storage.from(cfg.FILE_BUCKET).upload(path, blob, { contentType: "image/png" });
+      if (error) return toast("Logo upload failed: " + error.message, "error");
+      r.icon_path = path;
+    }
+  } catch (e) { return toast(e.message, "error"); }
+
+  rows.forEach(r => delete r._file);
   await db.from("app_shortcuts").delete().not("id", "is", null);
   if (rows.length) {
     const { error } = await db.from("app_shortcuts").insert(rows);
     if (error) return toast(error.message, "error");
   }
-  toast("Shortcuts saved — download the installer if you added any", "success");
+  toast("Shortcuts saved", "success");
   route();
 };
 
@@ -1524,6 +1593,24 @@ window.saveShortcuts = async () => {
 
 // Registry string values escape backslashes and quotes.
 const regEsc = (s) => String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+// Naming the .exe straight in the registry launches it with whatever working
+// directory Chrome had — measured as C:\Windows\System32 — which breaks tools that
+// read data/log/config folders next to themselves. Flex is one. So:
+//
+//   .lnk  -> explorer.exe follows the shortcut, honouring the target, arguments and
+//            "start in" it already carries. No console window.
+//   .exe  -> cmd's `start /d` sets the working directory to the program's own folder,
+//            which is what a normal desktop shortcut does. Briefly flashes a console.
+//
+// Pasting a .lnk is therefore the nicer option where the program ships one.
+function regCommandFor(path) {
+  const p = String(path).trim();
+  if (/\.lnk$/i.test(p)) return `explorer.exe \\"${regEsc(p)}\\"`;
+  const dir = p.includes("\\") ? p.replace(/\\[^\\]*$/, "") : "";
+  const startIn = dir ? ` /d \\"${regEsc(dir)}\\"` : "";
+  return `cmd.exe /c start \\"\\"${startIn} \\"${regEsc(p)}\\"`;
+}
 
 function regFileContent(list) {
   const out = ["Windows Registry Editor Version 5.00", ""];
@@ -1534,7 +1621,7 @@ function regFileContent(list) {
     out.push(`"URL Protocol"=""`);
     out.push("");
     out.push(`[HKEY_CURRENT_USER\\Software\\Classes\\${s.scheme}\\shell\\open\\command]`);
-    out.push(`@="\\"${regEsc(s.exe_path)}\\""`);
+    out.push(`@="${regCommandFor(s.exe_path)}"`);
     out.push("");
   });
   return out.join("\r\n");
@@ -1568,11 +1655,13 @@ function shortcutSettingsHtml(list) {
   return `<div class="panel">
     <h3>Tuning tool shortcuts</h3>
     <div class="muted" style="font-size:12px;margin-bottom:12px">
-      Buttons on the Dashboard that open programs on this PC. Type the full path to each
-      <code>.exe</code> — right-click the program's desktop icon → Properties → Target to find it.
+      Buttons on the Dashboard that open programs on this PC. The easiest way to fill the path in:
+      right-click the program's desktop icon → <strong>Properties</strong>, then copy the
+      <strong>Target</strong> box. If the program has a launcher shortcut, you can paste the path to
+      the <code>.lnk</code> itself and it'll be followed exactly as double-clicking it would.
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th class="col-icon">Icon</th><th>Name</th><th>Path to the program</th><th></th></tr></thead>
+      <thead><tr><th class="col-logo">Logo</th><th>Name</th><th>Path to the program</th><th></th></tr></thead>
       <tbody id="sc-body">${(list.length ? list : [{}]).map(shortcutRowHtml).join("")}</tbody>
     </table></div>
     <button type="button" class="btn btn-sm" onclick="shortcutAddRow()">+ Add shortcut</button>
@@ -1656,6 +1745,7 @@ views.settings = async () => {
       <button type="button" class="btn" onclick="changeScanFolder()">Choose scan folder…</button>
     </div>
     ${shortcutSettingsHtml(shortcuts)}`;
+  signShortcutLogos();
   $("#settings-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const payload = readForm(e.target);
