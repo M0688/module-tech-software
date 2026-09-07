@@ -355,6 +355,12 @@ details.jd-section[open] .jd-sec-title::before { transform: rotate(90deg); }
 .pf-pass { color: var(--green); }
 .pf-fail { color: var(--red); }
 
+/* Knowledge library */
+.kb-or { display: flex; align-items: center; text-align: center; color: var(--text-dim); font-size: 12px; margin: 14px 0; }
+.kb-or::before, .kb-or::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
+.kb-or span { padding: 0 12px; }
+.ai-sources { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--border); font-size: 13px; line-height: 1.9; }
+
 .save-progress { border-style: dashed; }
 .run-save-hint { font-size: 13px; color: var(--text-dim); margin-bottom: 10px; }
 .run-job-fixed { font-size: 13px; color: var(--text-dim); margin-bottom: 10px; }

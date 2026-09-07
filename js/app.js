@@ -2072,6 +2072,111 @@ views.plate = async () => {
     <div class="panel"><div class="pf-log" id="pf-log"></div></div>`;
 };
 
+/* ===========================================================
+   KNOWLEDGE LIBRARY — the datasheets & notes the AI learns from
+   Upload a PDF / photo / text; the `knowledge` Edge Function
+   transcribes, chunks and embeds it. Every AI feature then
+   retrieves the relevant pieces automatically (see aiAsk retrieve).
+   =========================================================== */
+function aiSourcesHtml(sources) {
+  if (!sources || !sources.length) return "";
+  return `<div class="ai-sources"><span class="muted">Used from your library:</span> ${sources.map(s => `<span class="chip">${esc(s.title)}</span>`).join(" ")}</div>`;
+}
+
+// PDF -> base64 as-is; image -> resized via aiFileToPart; else reject.
+async function kbFileToPayload(file) {
+  if (/^image\//.test(file.type)) { const p = await aiFileToPart(file, 2000); return { kind: "image", mime: p.mime, data: p.data }; }
+  if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) {
+    if (file.size > 11 * 1024 * 1024) throw new Error("PDF is over ~10MB — split it or save a smaller copy");
+    const data = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onerror = () => rej(new Error("Couldn't read " + file.name));
+      r.onload = () => res(String(r.result).split(",")[1]);
+      r.readAsDataURL(file);
+    });
+    return { kind: "pdf", mime: "application/pdf", data };
+  }
+  throw new Error("Only PDFs and photos — or paste the text instead");
+}
+
+window.kbSubmit = async () => {
+  const title = el("kb-title").value.trim();
+  if (!title) return toast("Give it a title", "error");
+  const tags = el("kb-tags").value.split(",").map(s => s.trim()).filter(Boolean);
+  const file = (el("kb-file").files || [])[0];
+  const text = el("kb-text").value.trim();
+  if (!file && !text) return toast("Upload a file or paste some text", "error");
+  const btn = el("kb-add"), status = el("kb-status");
+  btn.disabled = true; btn.textContent = "Adding…";
+  status.textContent = file ? "Reading the document — this can take up to a minute…" : "Adding…";
+  try {
+    const body = { action: "ingest", title, tags };
+    if (file) {
+      const p = await kbFileToPayload(file);
+      body.kind = p.kind; body.source = file.name; body.file = { mime: p.mime, data: p.data };
+    } else { body.kind = "text"; body.text = text; }
+    const { data, error } = await db.functions.invoke("knowledge", { body });
+    if (error) {
+      let m = error.message || "Failed";
+      try { const j = await error.context.json(); if (j && j.error) m = j.error; } catch (_) { /* ignore */ }
+      throw new Error(m);
+    }
+    if (data && data.error) throw new Error(data.error);
+    toast(`Added "${title}" — ${data.chunks} searchable piece${data.chunks === 1 ? "" : "s"}`, "success");
+    location.hash = "knowledge"; route();
+  } catch (e) {
+    btn.disabled = false; btn.textContent = "Add to library"; status.textContent = "";
+    toast(e.message, "error");
+  }
+};
+
+window.kbDelete = async (id) => {
+  if (!confirm("Remove this document from the AI library? This can't be undone.")) return;
+  const { error } = await db.from("knowledge_docs").delete().eq("id", id);
+  if (error) return toast(error.message, "error");
+  toast("Removed from the library", "success");
+  route();
+};
+
+views.knowledge = async () => {
+  const { data: docs } = await db.from("knowledge_docs").select("*").order("created_at", { ascending: false });
+  const list = docs || [];
+  el("view").innerHTML = `
+    <div class="page-head"><div><h1>Knowledge</h1>
+      <div class="page-sub">Datasheets, pinouts and notes the AI reads from. Everything here is searched automatically when you use fault analysis, board inspection or "what next".</div></div></div>
+
+    <div class="panel">
+      <h3>Add to the library</h3>
+      <div class="form-grid">
+        <div class="field"><label>Title *</label><input id="kb-title" placeholder="e.g. Bosch EDC17C64 pinout"></div>
+        <div class="field"><label>Tags (optional, comma separated)</label><input id="kb-tags" placeholder="e.g. EDC17, VAG, immobiliser"></div>
+      </div>
+      <div class="field full" style="margin-top:10px"><label>Upload a PDF or photo</label>
+        <input type="file" id="kb-file" accept="application/pdf,image/*">
+        <div class="muted" style="font-size:12px;margin-top:4px">Scanned PDFs and phone photos work too — Gemini reads the text off them. Keep files under ~10MB.</div></div>
+      <div class="kb-or"><span>or</span></div>
+      <div class="field full"><label>Paste text</label><textarea id="kb-text" rows="4" placeholder="Paste a datasheet section, a forum answer, your own bench notes…"></textarea></div>
+      <div class="form-actions" style="justify-content:flex-start;gap:12px">
+        <button class="btn btn-primary" id="kb-add" onclick="kbSubmit()">Add to library</button>
+        <span class="muted" id="kb-status"></span>
+      </div>
+    </div>
+
+    <div class="page-head" style="margin-top:6px"><h1 style="font-size:18px">Library</h1>
+      <span class="page-sub">${list.length} document${list.length === 1 ? "" : "s"}</span></div>
+    <div class="table-wrap">${list.length ? `<table>
+      <thead><tr><th>Title</th><th>Type</th><th>Tags</th><th>Pieces</th><th>Added</th><th></th></tr></thead>
+      <tbody>${list.map(d => `<tr>
+        <td>${esc(d.title)}${d.source ? ` <span class="muted" style="font-size:12px">· ${esc(d.source)}</span>` : ""}</td>
+        <td class="muted">${esc(d.kind)}</td>
+        <td>${(d.tags || []).map(t => `<span class="chip">${esc(t)}</span>`).join(" ") || "<span class='muted'>—</span>"}</td>
+        <td class="muted">${d.chunk_count}</td>
+        <td class="muted">${fmtDate(d.created_at)}</td>
+        <td class="row-actions"><button class="btn btn-sm btn-danger" onclick="kbDelete('${d.id}')">Delete</button></td>
+      </tr>`).join("")}</tbody>
+    </table>` : `<div class="empty">Nothing yet. Add a datasheet, pinout or your own notes and the AI will start using it.</div>`}</div>`;
+};
+
 const FIELD_TYPES = [["text", "Text"], ["number", "Number"], ["textarea", "Long text"], ["photo", "Photo / file"]];
 
 window.openFile = async (path) => {
@@ -3015,10 +3120,11 @@ window.aiRunFault = async (jobId) => {
   ].filter(Boolean).join("\n");
 
   try {
-    const res = await aiAsk({ system: AI_SYSTEM, prompt, schema: AI_FAULT_SCHEMA });
+    const retrieve = [aiVehicleLine(j.vehicles), "Symptoms: " + symptoms, dtcs ? "Codes: " + dtcs : ""].filter(Boolean).join(". ");
+    const res = await aiAsk({ system: AI_SYSTEM, prompt, schema: AI_FAULT_SCHEMA, retrieve });
     const d = res.data;
     closeModal();
-    window._aiResult = { kind: "fault", jobId, input: { symptoms, dtcs, tried }, result: d, model: res.model };
+    window._aiResult = { kind: "fault", jobId, input: { symptoms, dtcs, tried }, result: d, model: res.model, sources: res.sources };
     const out = el("ai-out");
     if (!out) return;
     out.innerHTML = aiPanel("Fault analysis", `
@@ -3035,7 +3141,8 @@ window.aiRunFault = async (jobId) => {
         </div>`).join("")}
       ${(d.next_steps || []).length ? `<div class="ai-sub">Do this next</div>${aiList(d.next_steps)}` : ""}
       ${(d.ask_the_customer || []).length ? `<div class="ai-sub">Worth asking the customer</div>${aiList(d.ask_the_customer)}` : ""}
-      ${(d.uncertain_about || []).length ? `<div class="ai-sub ai-sub-warn">Check these against the wiring diagram — Gemini wasn't sure</div>${aiList(d.uncertain_about, "ai-warn")}` : ""}`, "aiSaveResult()");
+      ${(d.uncertain_about || []).length ? `<div class="ai-sub ai-sub-warn">Check these against the wiring diagram — Gemini wasn't sure</div>${aiList(d.uncertain_about, "ai-warn")}` : ""}
+      ${aiSourcesHtml(res.sources)}`, "aiSaveResult()");
     out.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) {
     aiBusy(btn, false);
@@ -3136,10 +3243,11 @@ window.aiRunPhoto = async (jobId) => {
       "rather than guessing. Finish with what to probe or measure next to confirm.",
     ].join("\n");
 
-    const res = await aiAsk({ system: AI_SYSTEM, prompt, images, schema: AI_PHOTO_SCHEMA });
+    const retrieve = [aiVehicleLine(j.vehicles), note].filter(Boolean).join(". ");
+    const res = await aiAsk({ system: AI_SYSTEM, prompt, images, schema: AI_PHOTO_SCHEMA, retrieve });
     const d = res.data;
     closeModal();
-    window._aiResult = { kind: "photo", jobId, input: { note, photos: files.length }, result: d, model: res.model };
+    window._aiResult = { kind: "photo", jobId, input: { note, photos: files.length }, result: d, model: res.model, sources: res.sources };
     const out = el("ai-out");
     if (!out) return;
     out.innerHTML = aiPanel("Board inspection", `
@@ -3156,7 +3264,8 @@ window.aiRunPhoto = async (jobId) => {
           <div class="ai-action">➜ ${aiText(f.action)}</div>
         </div>`).join("")}
       ${(d.part_numbers || []).length ? `<div class="ai-sub">Part numbers read off the board</div>${aiList(d.part_numbers)}` : ""}
-      ${(d.next_steps || []).length ? `<div class="ai-sub">Do this next</div>${aiList(d.next_steps)}` : ""}`, "aiSaveResult()");
+      ${(d.next_steps || []).length ? `<div class="ai-sub">Do this next</div>${aiList(d.next_steps)}` : ""}
+      ${aiSourcesHtml(res.sources)}`, "aiSaveResult()");
     out.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) {
     aiBusy(btn, false);
@@ -3172,7 +3281,7 @@ window.aiSaveResult = async () => {
   const title = r.kind === "photo" ? "AI board inspection" : "AI fault analysis";
   const { error } = await db.from("diagnostic_runs").insert({
     flow_id: null, job_id: r.jobId, title,
-    data: { ai: r.kind, input: r.input, result: r.result, model: r.model },
+    data: { ai: r.kind, input: r.input, result: r.result, model: r.model, sources: r.sources || [] },
   });
   if (error) return toast(error.message, "error");
   toast("Saved to job", "success");
@@ -3403,11 +3512,11 @@ window.aiNextStepTree = async (btn) => {
   ].join("\n");
 
   try {
-    const res = await aiAsk({ system: AI_SYSTEM, prompt });
+    const res = await aiAsk({ system: AI_SYSTEM, prompt, retrieve: [st.title, vehicle, cur ? cur.title : ""].filter(Boolean).join(". ") });
     aiBusy(btn, false);
     const out = el("ai-run-out");
     if (!out) return;
-    out.innerHTML = aiPanel(st.conclusion ? "Sanity check" : "How to run this check", `<div class="ai-summary">${aiText(res.text)}</div>`);
+    out.innerHTML = aiPanel(st.conclusion ? "Sanity check" : "How to run this check", `<div class="ai-summary">${aiText(res.text)}</div>${aiSourcesHtml(res.sources)}`);
     out.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (e) {
     aiBusy(btn, false);
@@ -3451,11 +3560,11 @@ window.aiNextStepCheck = async (btn) => {
   ].filter(Boolean).join("\n");
 
   try {
-    const res = await aiAsk({ system: AI_SYSTEM, prompt });
+    const res = await aiAsk({ system: AI_SYSTEM, prompt, retrieve: [st.title, vehicle].filter(Boolean).join(". ") });
     aiBusy(btn, false);
     const out = el("ai-run-out");
     if (!out) return;
-    out.innerHTML = aiPanel("Reading the results so far", `<div class="ai-summary">${aiText(res.text)}</div>`);
+    out.innerHTML = aiPanel("Reading the results so far", `<div class="ai-summary">${aiText(res.text)}</div>${aiSourcesHtml(res.sources)}`);
     out.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (e) {
     aiBusy(btn, false);

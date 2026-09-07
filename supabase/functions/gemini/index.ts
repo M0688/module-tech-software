@@ -7,16 +7,21 @@
 //
 // The front end sends what to ask; the key never leaves the server.
 //
-//   POST { system?, prompt, images?: [{ mime, data }], schema?, model?, temperature? }
-//   ->   { text, data?, model }
+//   POST { system?, prompt, images?: [{ mime, data }], schema?, model?, temperature?,
+//          retrieve?: string }   // retrieve = search the knowledge library and ground the answer
+//   ->   { text, data?, model, sources?: [{ title }] }
 //
 // `schema` is an OpenAPI-subset response schema. When present Gemini is asked for JSON
 // and the parsed object comes back in `data`.
 //
+// When `retrieve` is a non-empty string, the workshop knowledge library is searched
+// (pgvector) and the most relevant chunks are prepended to the prompt as reference,
+// with the documents they came from returned in `sources`.
+//
 // Secrets used (rows in app_secrets):
 //   GEMINI_API_KEY  required — https://aistudio.google.com/apikey
-//   GEMINI_MODEL    optional — overrides DEFAULT_MODEL below without a redeploy,
-//                   which is how to move to a newer model when Google retires this one
+//   GEMINI_MODEL    optional — overrides DEFAULT_MODEL below without a redeploy
+//   GEMINI_EMBED_MODEL optional — embedding model for retrieval (default gemini-embedding-001)
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -34,9 +39,22 @@ function json(obj: unknown, status = 200) {
 }
 
 const DEFAULT_MODEL = "gemini-3.6-flash";
+const EMBED_DIM = 768;
+const GENAI = "https://generativelanguage.googleapis.com/v1beta/models";
 const MAX_PROMPT = 60_000;   // characters
 const MAX_IMAGES = 4;
 const MAX_IMAGE = 6_000_000; // base64 characters, ~4.5MB of image
+
+async function embedOne(apiKey: string, model: string, text: string): Promise<number[]> {
+  const r = await fetch(`${GENAI}/${model}:embedContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify({ model: "models/" + model, content: { parts: [{ text }] }, outputDimensionality: EMBED_DIM }),
+  });
+  if (!r.ok) throw new Error("embed " + r.status);
+  const d = await r.json();
+  return d.embedding.values;
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -54,7 +72,7 @@ Deno.serve(async (req) => {
   let body: any = {};
   try { body = await req.json(); } catch (_) { /* ignore */ }
 
-  const prompt = String(body.prompt ?? "").trim();
+  let prompt = String(body.prompt ?? "").trim();
   if (!prompt) return json({ error: "No prompt provided" }, 400);
   if (prompt.length > MAX_PROMPT) return json({ error: "Prompt too long" }, 400);
 
@@ -65,7 +83,7 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Load the key (service role bypasses RLS on app_secrets)
+  // Load secrets (service role bypasses RLS on app_secrets)
   const admin = createClient(SUPA_URL, SERVICE);
   const { data: rows } = await admin.from("app_secrets").select("key,value");
   const S: Record<string, string> = {};
@@ -76,6 +94,32 @@ Deno.serve(async (req) => {
     return json({ error: "Gemini isn't set up yet — add a GEMINI_API_KEY row to app_secrets." }, 503);
   }
   const model = String(body.model || S.GEMINI_MODEL || DEFAULT_MODEL);
+  const embedModel = S.GEMINI_EMBED_MODEL || "gemini-embedding-001";
+
+  // ----- knowledge retrieval (grounding) -----
+  let sources: { title: string }[] = [];
+  const retrieve = String(body.retrieve ?? "").trim();
+  if (retrieve) {
+    try {
+      const qv = await embedOne(apiKey, embedModel, retrieve);
+      const { data: matches } = await admin.rpc("match_knowledge", {
+        query_embedding: "[" + qv.join(",") + "]",
+        match_count: Number(body.knowledgeK) || 6,
+        min_similarity: typeof body.knowledgeMin === "number" ? body.knowledgeMin : 0.35,
+      });
+      if (matches && matches.length) {
+        const ctx = matches.map((m: any) => `[${m.title}]\n${m.content}`).join("\n\n---\n\n");
+        prompt =
+          "Reference material from the workshop's own library. Prefer it where it applies to THIS exact vehicle/module; " +
+          "if it doesn't cover something, rely on your own knowledge and say which parts weren't in the library.\n\n" +
+          ctx + "\n\n=====\n\n" + prompt;
+        const seen = new Set<string>();
+        for (const m of matches) {
+          if (!seen.has(m.title)) { seen.add(m.title); sources.push({ title: m.title }); }
+        }
+      }
+    } catch (_) { /* retrieval is best-effort — never fail the answer over it */ }
+  }
 
   const parts: unknown[] = [{ text: prompt }];
   for (const img of images) {
@@ -97,7 +141,7 @@ Deno.serve(async (req) => {
   let res: Response;
   try {
     res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      `${GENAI}/${encodeURIComponent(model)}:generateContent`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
@@ -124,7 +168,7 @@ Deno.serve(async (req) => {
     return json({ error: `Gemini gave nothing back (${why}). Try rewording.` }, 502);
   }
 
-  const result: Record<string, unknown> = { text, model };
+  const result: Record<string, unknown> = { text, model, sources };
   if (body.schema) {
     // Normally clean JSON, but strip a ```json fence if one slips through.
     const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
