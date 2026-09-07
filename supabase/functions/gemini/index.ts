@@ -143,7 +143,7 @@ Deno.serve(async (req) => {
       // Best-effort: the answer still runs without the web search. Report why it was skipped.
       const m = String((e as Error).message || e);
       searchError = /\b429\b|RESOURCE_EXHAUSTED|quota/i.test(m)
-        ? "Live web search is unavailable on this Gemini key (Google Search grounding needs billing enabled)."
+        ? "Live web search is unavailable right now (Gemini quota/credits)."
         : "Live web search couldn't run this time.";
     }
   }
