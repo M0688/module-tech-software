@@ -2082,6 +2082,11 @@ function aiSourcesHtml(sources) {
   if (!sources || !sources.length) return "";
   return `<div class="ai-sources"><span class="muted">Used from your library:</span> ${sources.map(s => `<span class="chip">${esc(s.title)}</span>`).join(" ")}</div>`;
 }
+function aiWebHtml(webSources, searchError) {
+  if (searchError) return `<div class="ai-sources muted">🔎 ${esc(searchError)}</div>`;
+  if (!webSources || !webSources.length) return "";
+  return `<div class="ai-sources"><span class="muted">From the web:</span> ${webSources.map(s => `<a href="${esc(s.uri)}" target="_blank" rel="noopener" class="chip">${esc(s.title)}</a>`).join(" ")}</div>`;
+}
 
 // PDF -> base64 as-is; image -> resized via aiFileToPart; else reject.
 async function kbFileToPayload(file) {
@@ -3070,6 +3075,7 @@ const AI_FAULT_SCHEMA = {
         required: ["cause", "likelihood", "reasoning", "checks"],
       },
     },
+    known_issues: { type: "ARRAY", items: { type: "STRING" } },
     next_steps: { type: "ARRAY", items: { type: "STRING" } },
     ask_the_customer: { type: "ARRAY", items: { type: "STRING" } },
     uncertain_about: { type: "ARRAY", items: { type: "STRING" } },
@@ -3089,6 +3095,9 @@ window.aiFaultAnalysis = async (jobId) => {
       <input id="ai-dtcs" placeholder="e.g. P0201, U0100, B1000 — comma separated"></div>
     <div class="field full"><label>What you've already checked</label>
       <textarea id="ai-tried" rows="3" placeholder="e.g. Battery 12.6V, main fuses good, tried a known-good ECU"></textarea></div>
+    <label style="display:inline-flex;align-items:center;gap:9px;margin-top:4px;cursor:pointer">
+      <input type="checkbox" id="ai-search" style="width:18px;height:18px;accent-color:var(--primary)">
+      <span>Also search the web for known faults on this exact vehicle <span class="muted">(needs billing on the Gemini key)</span></span></label>
     <div class="form-actions">
       <button class="btn btn-ghost" onclick="closeModalGlobal()">Cancel</button>
       <button class="btn btn-primary" id="ai-go" onclick="aiRunFault('${jobId}')">Analyse</button>
@@ -3100,9 +3109,10 @@ window.aiRunFault = async (jobId) => {
   if (!symptoms) return toast("Describe the symptoms first", "error");
   const dtcs = (el("ai-dtcs").value || "").trim();
   const tried = (el("ai-tried").value || "").trim();
+  const wantSearch = !!(el("ai-search") && el("ai-search").checked);
   const j = window._aiJob;
   const btn = el("ai-go");
-  aiBusy(btn, true, "Analysing…");
+  aiBusy(btn, true, wantSearch ? "Searching & analysing…" : "Analysing…");
 
   const prompt = [
     aiVehicleLine(j.vehicles),
@@ -3116,19 +3126,22 @@ window.aiRunFault = async (jobId) => {
     "specific vehicle, and the exact bench or in-car checks that would confirm or rule it out",
     "(pin numbers, expected voltages and resistances, scope patterns where relevant).",
     "Do not re-suggest anything already checked as if it were untried.",
+    "In known_issues, list well-documented common faults, weak points, recalls or TSBs specific to THIS exact vehicle and module — the things this model is known for. If none come to mind, leave it empty.",
     "List in uncertain_about any detail you gave that you are not confident is right for this exact vehicle.",
   ].filter(Boolean).join("\n");
 
   try {
     const retrieve = [aiVehicleLine(j.vehicles), "Symptoms: " + symptoms, dtcs ? "Codes: " + dtcs : ""].filter(Boolean).join(". ");
-    const res = await aiAsk({ system: AI_SYSTEM, prompt, schema: AI_FAULT_SCHEMA, retrieve });
+    const searchQuery = [aiVehicleLine(j.vehicles), "known common faults and weak points"].filter(Boolean).join(". ");
+    const res = await aiAsk({ system: AI_SYSTEM, prompt, schema: AI_FAULT_SCHEMA, retrieve, search: wantSearch, searchQuery });
     const d = res.data;
     closeModal();
-    window._aiResult = { kind: "fault", jobId, input: { symptoms, dtcs, tried }, result: d, model: res.model, sources: res.sources };
+    window._aiResult = { kind: "fault", jobId, input: { symptoms, dtcs, tried }, result: d, model: res.model, sources: res.sources, webSources: res.webSources, searchError: res.searchError };
     const out = el("ai-out");
     if (!out) return;
     out.innerHTML = aiPanel("Fault analysis", `
       <div class="ai-summary">${aiText(d.summary)}</div>
+      ${(d.known_issues || []).length ? `<div class="ai-sub">Known problems on this exact model</div>${aiList(d.known_issues, "ai-known")}` : ""}
       ${(d.causes || []).map((c, i) => `
         <div class="ai-cause">
           <div class="ai-cause-head">
@@ -3142,7 +3155,8 @@ window.aiRunFault = async (jobId) => {
       ${(d.next_steps || []).length ? `<div class="ai-sub">Do this next</div>${aiList(d.next_steps)}` : ""}
       ${(d.ask_the_customer || []).length ? `<div class="ai-sub">Worth asking the customer</div>${aiList(d.ask_the_customer)}` : ""}
       ${(d.uncertain_about || []).length ? `<div class="ai-sub ai-sub-warn">Check these against the wiring diagram — Gemini wasn't sure</div>${aiList(d.uncertain_about, "ai-warn")}` : ""}
-      ${aiSourcesHtml(res.sources)}`, "aiSaveResult()");
+      ${aiSourcesHtml(res.sources)}
+      ${aiWebHtml(res.webSources, res.searchError)}`, "aiSaveResult()");
     out.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) {
     aiBusy(btn, false);

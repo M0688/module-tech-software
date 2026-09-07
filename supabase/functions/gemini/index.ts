@@ -8,15 +8,17 @@
 // The front end sends what to ask; the key never leaves the server.
 //
 //   POST { system?, prompt, images?: [{ mime, data }], schema?, model?, temperature?,
-//          retrieve?: string }   // retrieve = search the knowledge library and ground the answer
-//   ->   { text, data?, model, sources?: [{ title }] }
+//          retrieve?: string,      // search the workshop knowledge library and ground the answer
+//          search?: boolean,       // live Google Search for known faults on this vehicle/module
+//          searchQuery?: string }
+//   ->   { text, data?, model, sources?: [{ title }], webSources?: [{ title, uri }] }
 //
 // `schema` is an OpenAPI-subset response schema. When present Gemini is asked for JSON
 // and the parsed object comes back in `data`.
 //
-// When `retrieve` is a non-empty string, the workshop knowledge library is searched
-// (pgvector) and the most relevant chunks are prepended to the prompt as reference,
-// with the documents they came from returned in `sources`.
+// `retrieve` searches the workshop knowledge library (pgvector) and prepends the best
+// chunks; `search` does a live web search (grounding with Google Search) as a separate
+// step and prepends what it finds. Their sources come back in `sources` / `webSources`.
 //
 // Secrets used (rows in app_secrets):
 //   GEMINI_API_KEY  required — https://aistudio.google.com/apikey
@@ -54,6 +56,35 @@ async function embedOne(apiKey: string, model: string, text: string): Promise<nu
   if (!r.ok) throw new Error("embed " + r.status);
   const d = await r.json();
   return d.embedding.values;
+}
+
+// Live web search (grounding with Google Search) as its own step, so it can be
+// combined with a JSON response schema on the main call (the two can't share a call).
+async function groundedSearch(apiKey: string, model: string, subject: string): Promise<{ text: string; webSources: { title: string; uri: string }[] }> {
+  const q = "Search the web for known common faults, weak points, recalls and technical service bulletins relevant to: " +
+    subject + ". List the specific real failure modes and their fixes, most common first. Only include things you can support from a source.";
+  const payload = {
+    contents: [{ role: "user", parts: [{ text: q }] }],
+    tools: [{ google_search: {} }],
+    generationConfig: { temperature: 0.2 },
+  };
+  const r = await fetch(`${GENAI}/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error("search " + r.status + ": " + (await r.text()).slice(0, 400));
+  const out = await r.json();
+  const cand = out?.candidates?.[0];
+  const text = (cand?.content?.parts ?? []).map((p: any) => p.text ?? "").join("").trim();
+  const chunks = cand?.groundingMetadata?.groundingChunks ?? [];
+  const seen = new Set<string>();
+  const webSources: { title: string; uri: string }[] = [];
+  for (const c of chunks) {
+    const w = c?.web;
+    if (w?.uri && !seen.has(w.uri)) { seen.add(w.uri); webSources.push({ title: w.title || w.uri, uri: w.uri }); }
+  }
+  return { text, webSources };
 }
 
 Deno.serve(async (req) => {
@@ -96,7 +127,28 @@ Deno.serve(async (req) => {
   const model = String(body.model || S.GEMINI_MODEL || DEFAULT_MODEL);
   const embedModel = S.GEMINI_EMBED_MODEL || "gemini-embedding-001";
 
-  // ----- knowledge retrieval (grounding) -----
+  // ----- live web search for known faults (grounding with Google Search) -----
+  let webSources: { title: string; uri: string }[] = [];
+  let searchError = "";
+  if (body.search === true) {
+    try {
+      const subject = String(body.searchQuery || body.retrieve || prompt).slice(0, 600);
+      const g = await groundedSearch(apiKey, model, subject);
+      if (g.text) {
+        prompt = "Known issues found on the web for this exact vehicle / module (real-world common faults, recalls, TSBs — treat as leads to verify against the car in front of you, not gospel):\n\n" +
+          g.text + "\n\n=====\n\n" + prompt;
+      }
+      webSources = g.webSources;
+    } catch (e) {
+      // Best-effort: the answer still runs without the web search. Report why it was skipped.
+      const m = String((e as Error).message || e);
+      searchError = /\b429\b|RESOURCE_EXHAUSTED|quota/i.test(m)
+        ? "Live web search is unavailable on this Gemini key (Google Search grounding needs billing enabled)."
+        : "Live web search couldn't run this time.";
+    }
+  }
+
+  // ----- knowledge retrieval (grounding from the workshop library) -----
   let sources: { title: string }[] = [];
   const retrieve = String(body.retrieve ?? "").trim();
   if (retrieve) {
@@ -168,7 +220,8 @@ Deno.serve(async (req) => {
     return json({ error: `Gemini gave nothing back (${why}). Try rewording.` }, 502);
   }
 
-  const result: Record<string, unknown> = { text, model, sources };
+  const result: Record<string, unknown> = { text, model, sources, webSources };
+  if (searchError) result.searchError = searchError;
   if (body.schema) {
     // Normally clean JSON, but strip a ```json fence if one slips through.
     const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
