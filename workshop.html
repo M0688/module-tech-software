@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workshop | Precision Electronics Repair</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1B2A4A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PER Workshop">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+  :root {
+    --navy: #1B2A4A; --navy-dark: #121d34; --ink: #1f2733; --muted: #5a6474;
+    --line: #d9dee6; --soft: #f4f6f9; --white: #fff; --red: #b3261e; --green: #1c6b3c; --amber: #8a5a00;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; color: var(--ink); background: var(--soft); line-height: 1.55; }
+  a { color: var(--navy); }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+
+  header { background: var(--navy); color: #fff; }
+  header .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+  .brand { font-weight: 700; letter-spacing: .5px; font-size: 15px; }
+  .who { font-size: 14px; color: #cdd6e6; display: flex; align-items: center; gap: 14px; }
+  .who button { background: transparent; border: 1px solid rgba(255,255,255,.4); color: #fff; border-radius: 6px; padding: 6px 12px; font: inherit; font-size: 14px; cursor: pointer; }
+
+  main { padding: 28px 0 64px; }
+  .card { background: var(--white); border: 1px solid var(--line); border-radius: 12px; padding: 24px; margin-bottom: 20px; }
+  h1 { font-size: 22px; color: var(--navy); margin: 0 0 4px; }
+  h2 { font-size: 17px; color: var(--navy); margin: 0 0 14px; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
+
+  label { display: block; font-weight: 600; font-size: 14px; margin: 0 0 5px; }
+  input[type=text], input[type=email] { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 15px; margin-bottom: 14px; }
+  input:focus { outline: 2px solid var(--navy); outline-offset: 1px; }
+  button.primary { background: var(--navy); color: #fff; border: 0; border-radius: 8px; font: inherit; font-weight: 700; padding: 12px 22px; cursor: pointer; }
+  button.primary:hover { background: var(--navy-dark); }
+  button.primary:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 14px; flex-wrap: wrap; }
+  .row > div { flex: 1 1 220px; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 11px 12px; border-bottom: 1px solid var(--line); font-size: 14px; vertical-align: top; }
+  th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  tr:last-child td { border-bottom: 0; }
+  .jobno { font-weight: 700; color: var(--navy); white-space: nowrap; }
+
+  .tag { display: inline-block; font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 20px; white-space: nowrap; }
+  .tag.wait { background: #fff4e0; color: var(--amber); }
+  .tag.in { background: #e7f2ec; color: var(--green); }
+
+  .msg { border-radius: 8px; padding: 12px 15px; margin-bottom: 16px; font-size: 14px; display: none; }
+  .msg.show { display: block; }
+  .msg.err { background: #fdecea; border: 1px solid #f3c2bd; color: var(--red); }
+  .msg.ok { background: #e7f2ec; border: 1px solid #bcdcca; color: var(--green); }
+  .empty { color: var(--muted); font-size: 14px; padding: 18px 0; }
+  .linkbox { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; word-break: break-all; margin-top: 10px; }
+
+  .check { display: flex; gap: 10px; align-items: center; margin: 2px 0 16px; }
+  .check input { width: 17px; height: 17px; }
+  .check label { font-weight: 400; font-size: 14px; margin: 0; color: var(--muted); }
+  .sendrow { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+  .send { display: inline-block; background: var(--white); border: 1px solid var(--line); color: var(--navy); border-radius: 8px; font: inherit; font-weight: 600; font-size: 14px; padding: 10px 16px; cursor: pointer; text-decoration: none; }
+  .send:hover { background: var(--soft); }
+  .send.wa { border-color: #25D366; color: #128C4A; }
+  nav.tabs { background: var(--navy-dark); }
+  nav.tabs .wrap { display: flex; gap: 4px; overflow-x: auto; }
+  nav.tabs a { color: #b9c4d8; text-decoration: none; font-weight: 600; font-size: 14px; padding: 12px 16px; white-space: nowrap; border-bottom: 3px solid transparent; }
+  nav.tabs a:hover { color: #fff; }
+  nav.tabs a.on { color: #fff; border-bottom-color: #fff; }
+  #login { max-width: 420px; margin: 60px auto; }
+  @media (max-width: 700px) {
+    th.hide, td.hide { display: none; }
+    main { padding: 20px 0 48px; }
+    .card { padding: 18px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="brand">PRECISION ELECTRONICS REPAIR · WORKSHOP</div>
+    <div class="who" id="who" style="display:none">
+      <span id="whoEmail"></span>
+      <button id="signOut">Sign out</button>
+    </div>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs" style="display:none"><div class="wrap">
+  <a href="workshop.html" class="on">Jobs</a>
+  <a href="contacts.html">Contacts</a>
+  <a href="leads.html">Leads</a>
+  <a href="knowledge.html">Knowledge</a>
+  <a href="reports.html">Reports</a>
+</div></nav>
+
+<main>
+  <div class="wrap">
+
+    <!-- Sign in -->
+    <div id="login" class="card" style="display:none">
+      <h1>Sign in</h1>
+      <p class="sub">We'll email you a one-time sign-in link.</p>
+      <div id="loginMsg" class="msg"></div>
+      <label for="loginEmail">Email address</label>
+      <input type="email" id="loginEmail" autocomplete="email" placeholder="info@precisionelectronicsrepair.co.uk">
+      <button class="primary" id="loginBtn" style="width:100%">Email me a sign-in link</button>
+    </div>
+
+    <!-- Dashboard -->
+    <div id="app" style="display:none">
+
+      <div class="card">
+        <h2>New job</h2>
+        <div id="newMsg" class="msg"></div>
+        <div class="row">
+          <div>
+            <label for="custName">Customer name</label>
+            <input type="text" id="custName" placeholder="Jane Smith">
+          </div>
+          <div>
+            <label for="custEmail">Customer email <span style="font-weight:400;color:var(--muted)">— optional</span></label>
+            <input type="email" id="custEmail" placeholder="jane@example.com">
+          </div>
+          <div>
+            <label for="custPhone">Mobile number <span style="font-weight:400;color:var(--muted)">— optional</span></label>
+            <input type="text" id="custPhone" placeholder="07700 900123">
+          </div>
+        </div>
+        <div class="check"><input type="checkbox" id="emailIt" checked><label for="emailIt">Email the link automatically (needs an email address)</label></div>
+        <button class="primary" id="createBtn">Create job &amp; get link</button>
+
+        <div id="sendArea" style="display:none">
+          <div class="linkbox" id="newLink"></div>
+          <div class="sendrow">
+            <button class="send" id="copyBtn">Copy link</button>
+            <a class="send wa" id="waBtn" target="_blank" rel="noopener">Send on WhatsApp</a>
+            <a class="send" id="smsBtn">Send by text</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="pushCard">
+        <h2>Phone alerts</h2>
+        <div id="pushMsg" class="msg"></div>
+        <p class="sub" id="pushHelp" style="margin-bottom:14px"></p>
+        <button class="primary" id="pushBtn">Turn on alerts on this device</button>
+      </div>
+
+      <div class="card" id="fuCard">
+        <h2>To do</h2>
+        <div id="fuMsg" class="msg"></div>
+        <div class="row">
+          <div><label for="fuTitle">What needs doing</label><input type="text" id="fuTitle" placeholder="Chase Watford Phone Repairs about the PS5 board"></div>
+          <div style="flex:0 0 180px"><label for="fuDate">When</label><input type="date" id="fuDate" style="width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:15px;margin-bottom:14px"></div>
+          <div style="flex:0 0 auto"><button class="primary" id="fuBtn" style="margin-bottom:14px">Add</button></div>
+        </div>
+        <div id="fuList"></div>
+      </div>
+
+      <div class="card">
+        <h2>Jobs</h2>
+        <div id="jobsMsg" class="msg"></div>
+        <div id="jobsArea"><p class="empty">Loading…</p></div>
+      </div>
+
+    </div>
+
+  </div>
+</main>
+
+<script type="module">
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const SUPABASE_URL = 'https://eazzljgezdownmcddeyr.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_Tk5nuWw8LkpIb73ttPIlBw_zdT567D6';
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const $ = id => document.getElementById(id);
+function show(el, text, kind) {
+  el.textContent = text;
+  el.className = 'msg show ' + kind;
+}
+function hide(el) { el.className = 'msg'; }
+
+// ---------- sign in ----------
+$('loginBtn').addEventListener('click', async () => {
+  const email = $('loginEmail').value.trim();
+  if (!email) return show($('loginMsg'), 'Please enter your email address.', 'err');
+  $('loginBtn').disabled = true;
+  const { error } = await sb.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: window.location.href.split('#')[0] }
+  });
+  $('loginBtn').disabled = false;
+  if (error) return show($('loginMsg'), error.message, 'err');
+  show($('loginMsg'), 'Check your email for the sign-in link.', 'ok');
+});
+
+$('signOut').addEventListener('click', async () => {
+  await sb.auth.signOut();
+  location.reload();
+});
+
+// ---------- jobs ----------
+function fmt(ts) {
+  if (!ts) return '';
+  return new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+async function loadJobs() {
+  const { data, error } = await sb.from('job_list').select('*').order('created_at', { ascending: false });
+  if (error) {
+    $('jobsArea').innerHTML = '';
+    return show($('jobsMsg'), error.message, 'err');
+  }
+  if (!data.length) {
+    $('jobsArea').innerHTML = '<p class="empty">No jobs yet. Create one above.</p>';
+    return;
+  }
+  const rows = data.map(j => `
+    <tr>
+      <td class="jobno"><a href="job.html?job=${j.job_number}" style="text-decoration:none">${j.job_number}</a></td>
+      <td>${j.customer_name || '<span style="color:#5a6474">—</span>'}${j.customer_email ? `<br><span style="color:#5a6474;font-size:13px">${j.customer_email}</span>` : ''}</td>
+      <td class="hide">${j.make_model || ''}${j.fault_description ? `<br><span style="color:#5a6474;font-size:13px">${j.fault_description.slice(0, 60)}${j.fault_description.length > 60 ? '…' : ''}</span>` : ''}</td>
+      <td>${j.has_intake
+            ? '<span class="tag in">Form received</span>'
+            : '<span class="tag wait">Awaiting form</span>'}</td>
+      <td class="hide">${fmt(j.submitted_at || j.created_at)}</td>
+    </tr>`).join('');
+  $('jobsArea').innerHTML = `<table>
+    <thead><tr><th>Job</th><th>Customer</th><th class="hide">Item</th><th>Status</th><th class="hide">Date</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
+function ukNumber(raw) {
+  const digits = String(raw || '').replace(/[^0-9+]/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('+')) return digits.slice(1);
+  if (digits.startsWith('44')) return digits;
+  if (digits.startsWith('0')) return '44' + digits.slice(1);
+  return digits;
+}
+
+// On a computer, hand the message to the WhatsApp desktop app; on a phone, wa.me opens it.
+const ON_PHONE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const WA_TARGET = ON_PHONE ? '_blank' : '_self';
+function waLink(num, message) {
+  const text = encodeURIComponent(message || '');
+  if (ON_PHONE) return 'https://wa.me/' + (num || '') + '?text=' + text;
+  return 'whatsapp://send?' + (num ? 'phone=' + num + '&' : '') + 'text=' + text;
+}
+
+$('copyBtn').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText($('newLink').textContent);
+    $('copyBtn').textContent = 'Copied';
+    setTimeout(() => { $('copyBtn').textContent = 'Copy link'; }, 2000);
+  } catch (e) {
+    show($('newMsg'), 'Could not copy automatically — select the link above and copy it.', 'err');
+  }
+});
+
+$('createBtn').addEventListener('click', async () => {
+  hide($('newMsg'));
+  $('sendArea').style.display = 'none';
+  const name = $('custName').value.trim();
+  const email = $('custEmail').value.trim();
+  const phone = $('custPhone').value.trim();
+  const wantEmail = $('emailIt').checked;
+
+  if (wantEmail && !email) {
+    return show($('newMsg'), "Enter an email address, or untick 'Email the link automatically'.", 'err');
+  }
+  if (!email && !phone) {
+    return show($('newMsg'), 'Enter an email address or a mobile number.', 'err');
+  }
+
+  $('createBtn').disabled = true;
+  $('createBtn').textContent = 'Working…';
+
+  const { data, error } = await sb.rpc('create_job', { p_customer_name: name, p_customer_email: email || null, p_customer_phone: phone || null, p_company: null });
+  if (error) {
+    $('createBtn').disabled = false;
+    $('createBtn').textContent = 'Create job & get link';
+    return show($('newMsg'), error.message, 'err');
+  }
+  const job = Array.isArray(data) ? data[0] : data;
+
+  // message for WhatsApp / text
+  const hi = name ? ('Hi ' + name + ', ') : '';
+  const msg = hi + 'your job number with Precision Electronics Repair is ' + job.job_number +
+              '. Please fill in your booking form here: ' + job.link +
+              ' — any questions, call 07522 124273.';
+
+  $('newLink').textContent = job.link;
+  const num = ukNumber(phone);
+  const waBtn = $('waBtn'), smsBtn = $('smsBtn');
+  waBtn.href = waLink(num, msg);
+  waBtn.target = WA_TARGET;
+  waBtn.style.display = '';
+  if (num) {
+    smsBtn.href = 'sms:+' + num + '?&body=' + encodeURIComponent(msg);
+    smsBtn.style.display = '';
+  } else {
+    smsBtn.style.display = 'none';
+  }
+  $('sendArea').style.display = 'block';
+
+  let note = job.job_number + ' created.';
+  if (wantEmail && email) {
+    const { data: sess } = await sb.auth.getSession();
+    const token = sess?.session?.access_token;
+    const res = await fetch(SUPABASE_URL + '/functions/v1/send-job-link', {
+      method: 'POST',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_number: job.job_number, to: email, name })
+    });
+    const out = await res.json().catch(() => ({}));
+    if (out.ok) {
+      show($('newMsg'), note + ' Booking link emailed to ' + email + '. You can also send it by WhatsApp or text below.', 'ok');
+    } else {
+      show($('newMsg'), note + ' The email did not send (' + (out.error || 'unknown error') + '). Use the buttons below instead.', 'err');
+    }
+  } else {
+    show($('newMsg'), note + ' Send the link using the buttons below.', 'ok');
+  }
+
+  $('createBtn').disabled = false;
+  $('createBtn').textContent = 'Create job & get link';
+  $('custName').value = ''; $('custEmail').value = ''; $('custPhone').value = '';
+  loadJobs();
+});
+
+// ---------- to do ----------
+function fmtDate(d) { return d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : ''; }
+
+async function loadFollowUps() {
+  const { data, error } = await sb.from('follow_ups').select('*').eq('done', false).order('due_date').limit(25);
+  if (error) { $('fuList').innerHTML = ''; return; }
+  if (!data.length) { $('fuList').innerHTML = '<p class="empty">Nothing outstanding.</p>'; return; }
+  const today = new Date().toISOString().slice(0, 10);
+  $('fuList').innerHTML = `<table><tbody>${data.map(f => `
+    <tr>
+      <td>${f.title.replace(/</g, '&lt;')}</td>
+      <td style="white-space:nowrap" class="${f.due_date <= today ? '' : ''}">
+        <span style="color:${f.due_date <= today ? 'var(--red)' : 'var(--muted)'};font-weight:${f.due_date <= today ? '600' : '400'}">${fmtDate(f.due_date)}</span>
+      </td>
+      <td style="text-align:right"><button class="send" data-done="${f.id}">Done</button></td>
+    </tr>`).join('')}</tbody></table>`;
+  $('fuList').querySelectorAll('[data-done]').forEach(b => b.addEventListener('click', async () => {
+    await sb.from('follow_ups').update({ done: true, done_at: new Date().toISOString() }).eq('id', b.dataset.done);
+    loadFollowUps();
+  }));
+}
+
+$('fuBtn').addEventListener('click', async () => {
+  hide($('fuMsg'));
+  const title = $('fuTitle').value.trim();
+  if (!title) return show($('fuMsg'), 'What needs doing?', 'err');
+  const { error } = await sb.from('follow_ups').insert({ title, due_date: $('fuDate').value || new Date().toISOString().slice(0, 10) });
+  if (error) return show($('fuMsg'), error.message, 'err');
+  $('fuTitle').value = '';
+  loadFollowUps();
+});
+
+// ---------- phone alerts ----------
+const VAPID_PUBLIC = 'BC8_T1lb2mgEI_Km3p4TY7bwX4mEeRavbqLdPBIY7QT6VLMfe9QxK1gDcGPORJTW8BBFq6N-2dhXM9NvqP16SNk';
+
+function urlB64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+
+async function setupPushUI() {
+  const btn = $('pushBtn'), help = $('pushHelp');
+
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    btn.style.display = 'none';
+    help.textContent = 'This browser cannot show alerts. On iPhone, open this page in Safari, add it to your Home Screen, then open it from there.';
+    return;
+  }
+  if (isIOS && !isStandalone) {
+    btn.style.display = 'none';
+    help.innerHTML = 'To get alerts on your iPhone: tap <strong>Share</strong> → <strong>Add to Home Screen</strong>, then open the app from your Home Screen and come back here.';
+    return;
+  }
+
+  const reg = await navigator.serviceWorker.register('sw.js');
+  const existing = await reg.pushManager.getSubscription();
+  if (existing && Notification.permission === 'granted') {
+    btn.textContent = 'Send a test alert';
+    help.textContent = 'Alerts are on for this device. You will be notified when a customer submits a booking form.';
+    btn.onclick = async () => {
+      new Notification('Precision Electronics Repair', { body: 'Test alert — this is what a new booking looks like.', icon: 'icon-192.png' });
+    };
+    return;
+  }
+
+  help.textContent = 'Get a notification on this device when a customer submits a booking form.';
+  btn.onclick = async () => {
+    hide($('pushMsg'));
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') return show($('pushMsg'), 'Alerts were blocked. Allow notifications for this site in your browser settings.', 'err');
+
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlB64ToUint8Array(VAPID_PUBLIC)
+    });
+    const json = sub.toJSON();
+    const { data: sess } = await sb.auth.getSession();
+    const { error } = await sb.from('push_subscriptions').upsert({
+      email: sess?.session?.user?.email,
+      endpoint: json.endpoint,
+      p256dh: json.keys.p256dh,
+      auth: json.keys.auth,
+      device: navigator.userAgent.slice(0, 120)
+    }, { onConflict: 'endpoint' });
+    if (error) return show($('pushMsg'), error.message, 'err');
+    show($('pushMsg'), 'Alerts are on for this device.', 'ok');
+    setupPushUI();
+  };
+}
+
+// ---------- start ----------
+async function start() {
+  const { data } = await sb.auth.getSession();
+  if (data.session) {
+    $('whoEmail').textContent = data.session.user.email;
+    $('who').style.display = 'flex';
+    $('app').style.display = 'block';
+    $('login').style.display = 'none';
+    $('tabs').style.display = 'block';
+    $('fuDate').value = new Date().toISOString().slice(0, 10);
+    loadJobs();
+    loadFollowUps();
+    setupPushUI();
+  } else {
+    $('login').style.display = 'block';
+  }
+}
+
+sb.auth.onAuthStateChange((event) => {
+  if (event === 'SIGNED_IN') start();
+});
+
+start();
+</script>
+
+</body>
+</html>
