@@ -45,6 +45,7 @@
       </div>
       <div id="fileName" class="muted" style="margin:-6px 0 14px;display:none"></div>
 
+
       <div class="row">
         <div><label for="title">Title *</label><input type="text" id="title" placeholder="PS5 CFI-1216A power rails"></div>
         <div><label for="source">Where it came from</label><input type="text" id="source" placeholder="Sony service manual, rev 3"></div>
@@ -87,6 +88,20 @@ let FILE = null;
 async function start() {
   const sess = await requireSession();
   if (!sess) return;
+
+  // anything handed over from the diagnostic page
+  const draft = sessionStorage.getItem('knowledge_draft');
+  if (draft) {
+    sessionStorage.removeItem('knowledge_draft');
+    try {
+      const d = JSON.parse(draft);
+      $('title').value = d.title || '';
+      $('source').value = d.source || '';
+      $('text').value = d.text || '';
+      show($('msg'), 'Carried over from the diagnostic assistant — edit it, then add it.', 'ok');
+    } catch (_) { /* ignore */ }
+  }
+
   loadDocs();
 }
 

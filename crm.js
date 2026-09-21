@@ -48,6 +48,7 @@ export function chrome(active) {
     ['workshop.html', 'Jobs'],
     ['contacts.html', 'Contacts'],
     ['leads.html', 'Leads'],
+    ['diagnose.html', 'Diagnostic'],
     ['knowledge.html', 'Knowledge'],
     ['reports.html', 'Reports']
   ];
